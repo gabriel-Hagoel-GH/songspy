@@ -10,6 +10,12 @@
 <link rel="manifest" href="manifest.json"/>
 <title>SongSpy</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet"/>
+<script>
+// Must be defined before Spotify SDK loads
+window.onSpotifyWebPlaybackSDKReady = () => {
+  window._sdkReady = true;
+};
+</script>
 <script src="https://sdk.scdn.co/spotify-player.js"></script>
 <script src="/socket.io/socket.io.js"></script>
 <style>
@@ -456,7 +462,6 @@ const ISRAELI_HITS = {
 const DECADES = ['1960s','1970s','1980s','1990s','2000s','2010s','2020s'];
 const DURS = [10,20,30,40,50];
 const MAX_ATTEMPTS = 5;
-const MAX_ATTEMPTS = 5;
 const MEDALS = ['🥇','🥈','🥉'];
 
 // ── State ─────────────────────────────────────────────────
@@ -646,7 +651,8 @@ function connectSocket() {
 }
 
 // ── PKCE Auth ─────────────────────────────────────────────
-window.onSpotifyWebPlaybackSDKReady = () => { sdkReady = true; };
+// SDK callback is defined in head (before sdk loads). Sync it here:
+function checkSdkReady() { if (window._sdkReady) sdkReady = true; }
 
 function generateRandom(len) {
   const arr = new Uint8Array(len);
@@ -1238,7 +1244,8 @@ function showToast(msg) {
 
       // Wait for SDK
       let w=0;
-      while(!sdkReady&&w<6000){await sleep(200);w+=200;}
+      while(!sdkReady&&!window._sdkReady&&w<6000){await sleep(200);w+=200;}
+if(window._sdkReady)sdkReady=true;
       initSpotifyPlayer();
       w=0;
       while(!deviceId&&w<6000){await sleep(300);w+=300;}
