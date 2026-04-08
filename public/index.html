@@ -916,17 +916,31 @@ function setPos(pos) {
 }
 
 async function activatePlayer() {
-  // Transfer playback to this device to make it active
+  const btn = document.getElementById('activatePlayerBanner');
+  btn.querySelector('button').textContent = 'Activating…';
   try {
-    await spotifyFetch('https://api.spotify.com/v1/me/player', {
+    // Step 1: Transfer playback to SongSpy device
+    const r1 = await spotifyFetch('https://api.spotify.com/v1/me/player', {
       method: 'PUT',
       body: JSON.stringify({ device_ids: [deviceId], play: false })
     });
-    showToast('Player activated!');
-    document.getElementById('activatePlayerBanner').style.display = 'none';
-    playerActivated = true;
+    // Step 2: Wait for Spotify to acknowledge the transfer
+    await sleep(1500);
+    // Step 3: Verify device is now active
+    const r2 = await spotifyFetch('https://api.spotify.com/v1/me/player/devices');
+    const data = await r2.json();
+    const songspyDevice = (data.devices||[]).find(d => d.id === deviceId);
+    if (songspyDevice) {
+      playerActivated = true;
+      showToast('✓ Player ready!');
+      document.getElementById('activatePlayerBanner').style.display = 'none';
+    } else {
+      showToast('Try opening Spotify app first, then activate');
+      btn.querySelector('button').textContent = '🔊 Activate Spotify Player';
+    }
   } catch(e) {
-    showToast('Could not activate player');
+    showToast('Could not activate: ' + e.message);
+    btn.querySelector('button').textContent = '🔊 Activate Spotify Player';
   }
 }
 
@@ -943,32 +957,33 @@ async function hostPlayClip() {
   document.getElementById('hostPill').textContent = `Round ${currentAttempt+1} — ${dur} seconds`;
 
   try {
-    // First transfer playback to this device
-    if (!playerActivated) {
-      await spotifyFetch('https://api.spotify.com/v1/me/player', {
-        method: 'PUT',
-        body: JSON.stringify({ device_ids: [deviceId], play: false })
-      });
-      playerActivated = true;
-      await sleep(500); // wait for transfer
-    }
+    // Always transfer to our device first to ensure it is active
+    await spotifyFetch('https://api.spotify.com/v1/me/player', {
+      method: 'PUT',
+      body: JSON.stringify({ device_ids: [deviceId], play: false })
+    });
+    await sleep(800);
 
+    // Now play
     const res = await spotifyFetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
       method: 'PUT',
-      body: JSON.stringify({ uris:[song.uri], position_ms: playPosition==='start'?0:30000 })
+      body: JSON.stringify({ uris: [song.uri], position_ms: playPosition === 'start' ? 0 : 30000 })
     });
 
-    if (res.status === 404) {
-      // Device not found — show activate button
+    if (res.status === 404 || res.status >= 400) {
+      console.warn('Play failed, status:', res.status);
       document.getElementById('activatePlayerBanner').style.display = 'block';
       document.getElementById('hostPlayBtn').disabled = false;
       document.getElementById('hostPlayBtn').textContent = '▶ Play Clip';
       document.getElementById('hostLongerBtn').disabled = false;
       document.getElementById('hostWave').classList.add('off');
       playerActivated = false;
-      showToast('Tap "Activate Spotify Player" first');
+      showToast('Open Spotify app, play anything, then try again');
       return;
     }
+
+    playerActivated = true;
+    document.getElementById('activatePlayerBanner').style.display = 'none';
   } catch(e) {
     console.warn('Playback error:', e);
   }
