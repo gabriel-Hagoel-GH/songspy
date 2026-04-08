@@ -916,32 +916,10 @@ function setPos(pos) {
 }
 
 async function activatePlayer() {
-  const btn = document.getElementById('activatePlayerBanner');
-  btn.querySelector('button').textContent = 'Activating…';
-  try {
-    // Step 1: Transfer playback to SongSpy device
-    const r1 = await spotifyFetch('https://api.spotify.com/v1/me/player', {
-      method: 'PUT',
-      body: JSON.stringify({ device_ids: [deviceId], play: false })
-    });
-    // Step 2: Wait for Spotify to acknowledge the transfer
-    await sleep(1500);
-    // Step 3: Verify device is now active
-    const r2 = await spotifyFetch('https://api.spotify.com/v1/me/player/devices');
-    const data = await r2.json();
-    const songspyDevice = (data.devices||[]).find(d => d.id === deviceId);
-    if (songspyDevice) {
-      playerActivated = true;
-      showToast('✓ Player ready!');
-      document.getElementById('activatePlayerBanner').style.display = 'none';
-    } else {
-      showToast('Try opening Spotify app first, then activate');
-      btn.querySelector('button').textContent = '🔊 Activate Spotify Player';
-    }
-  } catch(e) {
-    showToast('Could not activate: ' + e.message);
-    btn.querySelector('button').textContent = '🔊 Activate Spotify Player';
-  }
+  // Just hide the banner — playback goes directly to device_id without transfer
+  playerActivated = true;
+  document.getElementById('activatePlayerBanner').style.display = 'none';
+  showToast('Ready! Press Play Clip');
 }
 
 async function hostPlayClip() {
@@ -957,28 +935,43 @@ async function hostPlayClip() {
   document.getElementById('hostPill').textContent = `Round ${currentAttempt+1} — ${dur} seconds`;
 
   try {
-    // Always transfer to our device first to ensure it is active
-    await spotifyFetch('https://api.spotify.com/v1/me/player', {
+    // Play directly on the SongSpy device_id — no transfer needed
+    // Spotify will route audio to this browser tab automatically
+    const res = await spotifyFetch(
+      `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
       method: 'PUT',
-      body: JSON.stringify({ device_ids: [deviceId], play: false })
-    });
-    await sleep(800);
-
-    // Now play
-    const res = await spotifyFetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
-      method: 'PUT',
-      body: JSON.stringify({ uris: [song.uri], position_ms: playPosition === 'start' ? 0 : 30000 })
+      body: JSON.stringify({
+        uris: [song.uri],
+        position_ms: playPosition === 'start' ? 0 : 30000
+      })
     });
 
-    if (res.status === 404 || res.status >= 400) {
-      console.warn('Play failed, status:', res.status);
-      document.getElementById('activatePlayerBanner').style.display = 'block';
+    if (res.status >= 400) {
+      const err = await res.json().catch(() => ({}));
+      console.warn('Play failed:', res.status, err);
+
+      // If premium_required or not_playing_locally — guide user
+      const reason = err?.error?.reason || '';
+      if (reason === 'PREMIUM_REQUIRED') {
+        showToast('Spotify Premium required for playback');
+      } else if (res.status === 404) {
+        showToast('Refreshing player — try again in 2 seconds');
+        // Re-init the player
+        if (spotifyPlayer) {
+          spotifyPlayer.disconnect();
+          await sleep(500);
+          initSpotifyPlayer();
+          await sleep(1500);
+        }
+      } else {
+        showToast('Playback error ' + res.status + ' — try again');
+      }
+
       document.getElementById('hostPlayBtn').disabled = false;
       document.getElementById('hostPlayBtn').textContent = '▶ Play Clip';
       document.getElementById('hostLongerBtn').disabled = false;
       document.getElementById('hostWave').classList.add('off');
-      playerActivated = false;
-      showToast('Open Spotify app, play anything, then try again');
+      document.getElementById('hostPill').className = 'pill a';
       return;
     }
 
