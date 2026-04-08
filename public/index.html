@@ -10,13 +10,7 @@
 <link rel="manifest" href="manifest.json"/>
 <title>SongSpy</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet"/>
-<script>
-// Must be defined before Spotify SDK loads
-window.onSpotifyWebPlaybackSDKReady = () => {
-  window._sdkReady = true;
-};
-</script>
-<script src="https://sdk.scdn.co/spotify-player.js"></script>
+<!-- Spotify SDK removed — using Connect API instead -->
 <script src="/socket.io/socket.io.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -286,6 +280,9 @@ input:focus{border-color:var(--g)}
       <div class="tnum" id="hostTimerNum">—</div>
     </div>
 
+    <div id="hostOpenSpotify" style="width:100%;background:rgba(58,134,255,.1);border:1px solid rgba(58,134,255,.3);border-radius:10px;padding:.6rem .9rem;margin-bottom:.5rem;font-size:.75rem;color:#7eb8ff;text-align:center;display:none">
+      ⚠️ Open Spotify app and play any song first, then click Play Clip
+    </div>
     <div id="hostPill" class="pill a">Round 1 — 10 seconds</div>
 
     <div class="wave off" id="hostWave">
@@ -293,9 +290,14 @@ input:focus{border-color:var(--g)}
       <div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div>
     </div>
 
-    <div id="activatePlayerBanner" style="width:100%;margin-bottom:.5rem;display:none">
-      <button class="btn blue" onclick="activatePlayer()">🔊 Activate Spotify Player</button>
-      <p style="font-size:.7rem;color:var(--m);text-align:center;margin-top:.3rem">Tap once to enable audio playback</p>
+    <div id="devicePanel" style="width:100%;margin-bottom:.5rem">
+      <div class="card" style="padding:.75rem">
+        <span class="lbl">🔊 Play music on</span>
+        <select id="deviceSelect" style="width:100%;background:var(--d3);border:1.5px solid #333;color:#fff;padding:.5rem .75rem;border-radius:10px;font-family:DM Sans,sans-serif;font-size:.85rem;outline:none;margin-bottom:.4rem">
+          <option value="">Loading devices…</option>
+        </select>
+        <button class="btn blue" style="font-size:.8rem;padding:.4rem" onclick="loadDevices()">↻ Refresh devices</button>
+      </div>
     </div>
 
     <div class="pos-row">
@@ -480,16 +482,88 @@ let timerInterval = null;
 let accessToken = '';
 let refreshToken = '';
 let codeVerifier = '';
-let spotifyPlayer = null;
-let deviceId = null;
-let sdkReady = false;
-let currentSongUri = '';
-let pendingRoomAfterLogin = null;
 let hasGuessed = false;
 let playedIds = new Set();
-let playerActivated = false;
 let currentSongs = [];
 let currentSongIdx = 0;
+
+// ── PKCE Auth ─────────────────────────────────────────────
+function generateRandom(len) {
+  const arr = new Uint8Array(len);
+  crypto.getRandomValues(arr);
+  return btoa(String.fromCharCode(...arr)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
+}
+async function generateChallenge(v) {
+  const data = new TextEncoder().encode(v);
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return btoa(String.fromCharCode(...new Uint8Array(digest))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
+}
+async function loginSpotify() {
+  codeVerifier = generateRandom(64);
+  const challenge = await generateChallenge(codeVerifier);
+  sessionStorage.setItem('cv', codeVerifier);
+  sessionStorage.setItem('pendingName', myName);
+  const params = new URLSearchParams({
+    response_type:'code', client_id:CLIENT_ID, scope:SCOPES,
+    redirect_uri:REDIRECT_URI, code_challenge_method:'S256',
+    code_challenge:challenge, show_dialog:'false'
+  });
+  window.location.href = 'https://accounts.spotify.com/authorize?' + params.toString();
+}
+async function exchangeCode(code) {
+  const verifier = sessionStorage.getItem('cv');
+  const res = await fetch('https://accounts.spotify.com/api/token', {
+    method:'POST',
+    headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body: new URLSearchParams({
+      grant_type:'authorization_code', code,
+      redirect_uri:REDIRECT_URI, client_id:CLIENT_ID, code_verifier:verifier
+    })
+  });
+  const data = await res.json();
+  if (!data.access_token) throw new Error(data.error_description || 'Auth failed');
+  return data;
+}
+async function refreshAccessToken() {
+  const rt = sessionStorage.getItem('rt');
+  if (!rt) return;
+  try {
+    const res = await fetch('https://accounts.spotify.com/api/token', {
+      method:'POST',
+      headers:{'Content-Type':'application/x-www-form-urlencoded'},
+      body: new URLSearchParams({ grant_type:'refresh_token', refresh_token:rt, client_id:CLIENT_ID })
+    });
+    const data = await res.json();
+    if (data.access_token) {
+      accessToken = data.access_token;
+      sessionStorage.setItem('at', accessToken);
+      if (data.refresh_token) sessionStorage.setItem('rt', data.refresh_token);
+      setTimeout(refreshAccessToken, (data.expires_in - 60) * 1000);
+    }
+  } catch {}
+}
+
+// ── Spotify Connect API ───────────────────────────────────
+function spotifyFetch(url, options={}) {
+  accessToken = sessionStorage.getItem('at') || accessToken;
+  const isGet = !options.method || options.method==='GET';
+  const headers = { Authorization:'Bearer '+accessToken };
+  if (!isGet) headers['Content-Type'] = 'application/json';
+  return fetch(url, { ...options, headers });
+}
+
+async function spotifyPlay(uri, positionMs) {
+  // Spotify Connect — plays on currently active device, no SDK needed
+  const res = await spotifyFetch('https://api.spotify.com/v1/me/player/play', {
+    method: 'PUT',
+    body: JSON.stringify({ uris: [uri], position_ms: positionMs })
+  });
+  return res;
+}
+
+async function spotifyPause() {
+  spotifyFetch('https://api.spotify.com/v1/me/player/pause', { method: 'PUT' }).catch(()=>{});
+}
 
 // ── Socket.io ─────────────────────────────────────────────
 function connectSocket() {
@@ -501,15 +575,9 @@ function connectSocket() {
     document.getElementById('lobbyCode').textContent = code;
     document.getElementById('playerCount').textContent = '1';
     hideLoading();
-    // If already have Spotify token, go straight to lobby
     const at = sessionStorage.getItem('at');
-    if (at) {
-      accessToken = at;
-      initSpotifyPlayer();
-      showScreen('sLobby');
-    } else {
-      showScreen('sSpotify');
-    }
+    if (at) { accessToken = at; showScreen('sLobby'); }
+    else showScreen('sSpotify');
   });
 
   socket.on('room_joined', ({ code, playerId }) => {
@@ -519,20 +587,14 @@ function connectSocket() {
     showScreen('sPlayerLobby');
   });
 
-  socket.on('error', msg => {
-    hideLoading();
-    showErr('joinErr', msg);
-    showToast(msg);
-  });
+  socket.on('error', msg => { hideLoading(); showToast(msg); showErr('joinErr', msg); });
 
-  socket.on('room_update', ({ phase, players, currentSongIdx: si, roundCount: rc, currentAttempt: ca, songCount }) => {
-    currentAttempt = ca;
-    if (phase === 'lobby') {
-      document.getElementById('playerCount').textContent = players.length;
-      renderLobbyPlayers(players);
-      renderPlayerLobbyList(players);
-    }
-    if (phase === 'playing') {
+  socket.on('room_update', ({ phase, players, currentSongIdx: si, roundCount: rc, currentAttempt: ca }) => {
+    currentAttempt = ca || 0;
+    document.getElementById('playerCount').textContent = players.length;
+    renderLobbyPlayers(players);
+    renderPlayerLobbyList(players);
+    if (phase === 'playing' || phase === 'revealing') {
       updatePlayerStatus(players);
       updateHostPlayerStatus(players);
     }
@@ -543,12 +605,8 @@ function connectSocket() {
 
   socket.on('game_start', ({ roundCount: rc, playPosition: pp }) => {
     roundCount = rc; playPosition = pp;
-    currentSongIdx = 0; currentAttempt = 0; hasGuessed = false; playedIds = new Set(); playerActivated = false;
-    if (isHost) {
-      initHostGameScreen();
-    } else {
-      initPlayerGameScreen();
-    }
+    currentSongIdx = 0; currentAttempt = 0; hasGuessed = false; playedIds = new Set();
+    isHost ? initHostGameScreen() : initPlayerGameScreen();
   });
 
   socket.on('song_playing', ({ attempt, duration }) => {
@@ -562,20 +620,7 @@ function connectSocket() {
     updateDots(attempt, isHost ? 'host' : 'player');
   });
 
-  socket.on('timer_start', ({ duration, end }) => {
-    startClientTimer(duration, end);
-    // When timer ends, update player UI
-    const remaining = end - Date.now();
-    setTimeout(() => {
-      if (!hasGuessed) {
-        document.getElementById('playerWave')?.classList.add('off');
-        if (document.getElementById('playerPill')) {
-          document.getElementById('playerPill').className = 'pill a';
-          document.getElementById('playerPill').textContent = "Time's up!";
-        }
-      }
-    }, remaining);
-  });
+  socket.on('timer_start', ({ duration, end }) => startClientTimer(duration, end));
 
   socket.on('play_longer', ({ attempt, duration }) => {
     currentAttempt = attempt;
@@ -595,17 +640,17 @@ function connectSocket() {
     }
   });
 
-  socket.on('player_guessed', ({ name, pts }) => {
-    showToast(`${name} +${pts}pts!`);
-  });
+  socket.on('player_guessed', ({ name, pts }) => showToast(`${name} +${pts}pts!`));
 
-  socket.on('guess_result', ({ correct, pts, message }) => {
+  socket.on('guess_result', ({ correct, pts }) => {
     if (correct) {
       hasGuessed = true;
       if (!isHost) {
         document.getElementById('playerGuessArea').style.display = 'none';
         document.getElementById('playerGuessedMsg').style.display = 'block';
         document.getElementById('playerGuessedPts').textContent = `+${pts} pts`;
+      } else {
+        showToast(`You got it! +${pts} pts`);
       }
       if (pts >= 8) launchConfetti();
     } else {
@@ -614,124 +659,30 @@ function connectSocket() {
         document.getElementById('playerGuessArtist').value = '';
         document.getElementById('playerGuessBtn').disabled = false;
         showErr('playerGuessErr', 'Not quite! Try again.');
+      } else {
+        document.getElementById('hostGuessBtn').disabled = false;
+        document.getElementById('hostGuessTitle').value = '';
+        document.getElementById('hostGuessArtist').value = '';
+        showErr('hostGuessErr', 'Not quite! Try again.');
       }
     }
   });
 
   socket.on('reveal', ({ won, song, players, attempt, isLast }) => {
     stopClientTimer();
+    spotifyPause();
     showReveal(won, song, players, attempt, isLast);
   });
 
   socket.on('next_song', ({ songIdx, roundCount: rc, playPosition: pp }) => {
     currentSongIdx = songIdx; roundCount = rc; playPosition = pp;
     currentAttempt = 0; hasGuessed = false;
-    if (isHost) {
-      initHostGameScreen();
-    } else {
-      initPlayerGameScreen();
-    }
+    isHost ? initHostGameScreen() : initPlayerGameScreen();
   });
 
-  socket.on('game_over', ({ players }) => {
-    stopClientTimer();
-    showGameOver(players);
-  });
-
-  socket.on('back_to_lobby', () => {
-    playedIds = new Set(); currentSongs = [];
-    if (isHost) showScreen('sLobby');
-    else showScreen('sPlayerLobby');
-  });
-
-  socket.on('host_left', () => {
-    showToast('Host left the game');
-    leaveRoom();
-  });
-}
-
-// ── PKCE Auth ─────────────────────────────────────────────
-// SDK callback is defined in head (before sdk loads). Sync it here:
-function checkSdkReady() { if (window._sdkReady) sdkReady = true; }
-
-function generateRandom(len) {
-  const arr = new Uint8Array(len);
-  crypto.getRandomValues(arr);
-  return btoa(String.fromCharCode(...arr)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
-}
-async function generateChallenge(v) {
-  const data = new TextEncoder().encode(v);
-  const digest = await crypto.subtle.digest('SHA-256', data);
-  return btoa(String.fromCharCode(...new Uint8Array(digest))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
-}
-
-async function loginSpotify() {
-  codeVerifier = generateRandom(64);
-  const challenge = await generateChallenge(codeVerifier);
-  sessionStorage.setItem('cv', codeVerifier);
-  sessionStorage.setItem('pendingRoom', roomCode);
-  sessionStorage.setItem('pendingName', myName);
-  const params = new URLSearchParams({
-    response_type:'code', client_id:CLIENT_ID, scope:SCOPES,
-    redirect_uri:REDIRECT_URI, code_challenge_method:'S256',
-    code_challenge:challenge, show_dialog:'false'
-  });
-  window.location.href = 'https://accounts.spotify.com/authorize?' + params.toString();
-}
-
-async function exchangeCode(code) {
-  const verifier = sessionStorage.getItem('cv');
-  const res = await fetch('https://accounts.spotify.com/api/token', {
-    method:'POST',
-    headers:{'Content-Type':'application/x-www-form-urlencoded'},
-    body: new URLSearchParams({
-      grant_type:'authorization_code', code,
-      redirect_uri:REDIRECT_URI, client_id:CLIENT_ID, code_verifier:verifier
-    })
-  });
-  const data = await res.json();
-  if (!data.access_token) throw new Error(data.error_description || 'Auth failed');
-  return data;
-}
-
-async function refreshAccessToken() {
-  const rt = sessionStorage.getItem('rt');
-  if (!rt) return;
-  try {
-    const res = await fetch('https://accounts.spotify.com/api/token', {
-      method:'POST',
-      headers:{'Content-Type':'application/x-www-form-urlencoded'},
-      body: new URLSearchParams({ grant_type:'refresh_token', refresh_token:rt, client_id:CLIENT_ID })
-    });
-    const data = await res.json();
-    if (data.access_token) {
-      accessToken = data.access_token;
-      sessionStorage.setItem('at', accessToken);
-      if (data.refresh_token) sessionStorage.setItem('rt', data.refresh_token);
-      if (spotifyPlayer) initSpotifyPlayer();
-      setTimeout(refreshAccessToken, (data.expires_in - 60) * 1000);
-    }
-  } catch {}
-}
-
-function initSpotifyPlayer() {
-  if (spotifyPlayer) { try { spotifyPlayer.disconnect(); } catch {} }
-  spotifyPlayer = new Spotify.Player({
-    name: 'SongSpy Host',
-    getOAuthToken: cb => cb(accessToken),
-    volume: 0.85
-  });
-  spotifyPlayer.addListener('ready', ({ device_id }) => { deviceId = device_id; });
-  spotifyPlayer.addListener('authentication_error', () => refreshAccessToken());
-  spotifyPlayer.connect();
-}
-
-function spotifyFetch(url, options={}) {
-  accessToken = sessionStorage.getItem('at') || accessToken;
-  const isGet = !options.method || options.method==='GET';
-  const headers = { Authorization:'Bearer '+accessToken };
-  if (!isGet) headers['Content-Type'] = 'application/json';
-  return fetch(url, { ...options, headers });
+  socket.on('game_over', ({ players }) => { stopClientTimer(); spotifyPause(); showGameOver(players); });
+  socket.on('back_to_lobby', () => { playedIds = new Set(); currentSongs = []; showScreen(isHost ? 'sLobby' : 'sPlayerLobby'); });
+  socket.on('host_left', () => { showToast('Host left the game'); leaveRoom(); });
 }
 
 // ── Navigation ────────────────────────────────────────────
@@ -766,11 +717,9 @@ function leaveRoom() {
   showScreen('sHome');
 }
 
-// ── Lobby Setup ───────────────────────────────────────────
+// ── Lobby ─────────────────────────────────────────────────
 function buildLobby() {
-  // Genre grid
-  const gg = document.getElementById('genreGrid');
-  gg.innerHTML = '';
+  const gg = document.getElementById('genreGrid'); gg.innerHTML = '';
   GENRES.forEach(g => {
     const b = document.createElement('button'); b.className='pick'; b.textContent=g;
     b.onclick = () => { b.classList.toggle('on'); selectedGenres = b.classList.contains('on') ? [...selectedGenres,g] : selectedGenres.filter(x=>x!==g); sendConfig(); };
@@ -781,27 +730,19 @@ function buildLobby() {
   il.onclick = () => { il.classList.toggle('on'); israeliMode=il.classList.contains('on'); sendConfig(); };
   gg.appendChild(il);
 
-  // Decade grid
-  const dg = document.getElementById('decadeGrid');
-  dg.innerHTML = '';
+  const dg = document.getElementById('decadeGrid'); dg.innerHTML = '';
   DECADES.forEach(d => {
     const b = document.createElement('button'); b.className='pick'; b.textContent=d;
     b.onclick = () => { b.classList.toggle('on'); selectedDecades = b.classList.contains('on') ? [...selectedDecades,d] : selectedDecades.filter(x=>x!==d); sendConfig(); };
     dg.appendChild(b);
   });
 
-  // Round buttons
-  const rb = document.getElementById('roundBtns');
-  rb.innerHTML = '';
+  const rb = document.getElementById('roundBtns'); rb.innerHTML = '';
   for (let n=4; n<=10; n++) {
     const b = document.createElement('button');
     b.className = 'btn sec round-btn' + (n===5?' active':'');
     b.textContent = n; b.dataset.n = n;
-    b.onclick = () => {
-      document.querySelectorAll('.round-btn').forEach(x=>x.classList.remove('active'));
-      b.classList.add('active');
-      roundCount = n; sendConfig();
-    };
+    b.onclick = () => { document.querySelectorAll('.round-btn').forEach(x=>x.classList.remove('active')); b.classList.add('active'); roundCount = n; sendConfig(); };
     rb.appendChild(b);
   }
   roundCount = 5;
@@ -830,7 +771,7 @@ function renderPlayerLobbyList(players) {
   });
 }
 
-// ── Host: Start Game ──────────────────────────────────────
+// ── Fetch Songs ───────────────────────────────────────────
 async function hostStartGame() {
   if (!selectedGenres.length && !israeliMode) { showErr('lobbyErr','Select at least one genre'); return; }
   if (!selectedDecades.length) { showErr('lobbyErr','Select at least one decade'); return; }
@@ -877,17 +818,13 @@ async function searchTracks(q, year, allTracks, ignoreDecade) {
       const ry = parseInt((t.album?.release_date||'0000').slice(0,4));
       const ok = ignoreDecade || (ry>=year && ry<=year+9);
       if (ok && !allTracks.find(x=>x.id===t.id)) {
-        allTracks.push({
-          title:t.name, artist:t.artists.map(a=>a.name).join(', '),
-          uri:t.uri, id:t.id, popularity:t.popularity||0,
-          albumArt:t.album?.images?.[0]?.url||'', releaseYear:ry
-        });
+        allTracks.push({ title:t.name, artist:t.artists.map(a=>a.name).join(', '), uri:t.uri, id:t.id, popularity:t.popularity||0, albumArt:t.album?.images?.[0]?.url||'', releaseYear:ry });
       }
     });
   } catch {}
 }
 
-// ── Host: Game Screen ─────────────────────────────────────
+// ── Host Game ─────────────────────────────────────────────
 function initHostGameScreen() {
   showScreen('sHostGame');
   document.getElementById('hostSongCounter').textContent = `Song ${currentSongIdx+1} of ${roundCount}`;
@@ -899,12 +836,12 @@ function initHostGameScreen() {
   document.getElementById('hostGuessArtist').value = '';
   document.getElementById('hostGuessBtn').disabled = false;
   document.getElementById('hostWave').classList.add('off');
-  document.getElementById('activatePlayerBanner').style.display = playerActivated ? 'none' : 'block';
+  document.getElementById('hostOpenSpotify').style.display = 'none';
   hasGuessed = false;
   updateDots(0, 'host');
   updateHostTimer(DURS[0], DURS[0]);
   setPos(playPosition);
-  document.getElementById('hostPill').textContent = `Round 1 — ${DURS[0]} seconds`;
+  document.getElementById('hostPill').textContent = `Click ▶ Play Clip to start`;
   document.getElementById('hostPill').className = 'pill a';
 }
 
@@ -913,13 +850,6 @@ function setPos(pos) {
   document.getElementById('posStart').classList.toggle('active', pos==='start');
   document.getElementById('posMid').classList.toggle('active', pos==='middle');
   sendConfig();
-}
-
-async function activatePlayer() {
-  // Just hide the banner — playback goes directly to device_id without transfer
-  playerActivated = true;
-  document.getElementById('activatePlayerBanner').style.display = 'none';
-  showToast('Ready! Press Play Clip');
 }
 
 async function hostPlayClip() {
@@ -934,59 +864,36 @@ async function hostPlayClip() {
   document.getElementById('hostPill').className = 'pill g';
   document.getElementById('hostPill').textContent = `Round ${currentAttempt+1} — ${dur} seconds`;
 
-  try {
-    // Play directly on the SongSpy device_id — no transfer needed
-    // Spotify will route audio to this browser tab automatically
-    const res = await spotifyFetch(
-      `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
-      method: 'PUT',
-      body: JSON.stringify({
-        uris: [song.uri],
-        position_ms: playPosition === 'start' ? 0 : 30000
-      })
-    });
+  const posMs = playPosition === 'start' ? 0 : 30000;
+  const res = await spotifyPlay(song.uri, posMs);
 
-    if (res.status >= 400) {
-      const err = await res.json().catch(() => ({}));
-      console.warn('Play failed:', res.status, err);
-
-      // If premium_required or not_playing_locally — guide user
-      const reason = err?.error?.reason || '';
-      if (reason === 'PREMIUM_REQUIRED') {
-        showToast('Spotify Premium required for playback');
-      } else if (res.status === 404) {
-        showToast('Refreshing player — try again in 2 seconds');
-        // Re-init the player
-        if (spotifyPlayer) {
-          spotifyPlayer.disconnect();
-          await sleep(500);
-          initSpotifyPlayer();
-          await sleep(1500);
-        }
-      } else {
-        showToast('Playback error ' + res.status + ' — try again');
-      }
-
-      document.getElementById('hostPlayBtn').disabled = false;
-      document.getElementById('hostPlayBtn').textContent = '▶ Play Clip';
-      document.getElementById('hostLongerBtn').disabled = false;
-      document.getElementById('hostWave').classList.add('off');
-      document.getElementById('hostPill').className = 'pill a';
-      return;
-    }
-
-    playerActivated = true;
-    document.getElementById('activatePlayerBanner').style.display = 'none';
-  } catch(e) {
-    console.warn('Playback error:', e);
+  if (res && res.status === 404) {
+    document.getElementById('hostOpenSpotify').style.display = 'block';
+    document.getElementById('hostPlayBtn').disabled = false;
+    document.getElementById('hostPlayBtn').textContent = '▶ Play Clip';
+    document.getElementById('hostLongerBtn').disabled = false;
+    document.getElementById('hostWave').classList.add('off');
+    document.getElementById('hostPill').className = 'pill a';
+    document.getElementById('hostPill').textContent = 'No active Spotify device';
+    return;
   }
 
+  if (res && res.status === 403) {
+    showToast('Spotify Premium required');
+    document.getElementById('hostPlayBtn').disabled = false;
+    document.getElementById('hostPlayBtn').textContent = '▶ Play Clip';
+    document.getElementById('hostLongerBtn').disabled = false;
+    document.getElementById('hostWave').classList.add('off');
+    return;
+  }
+
+  document.getElementById('hostOpenSpotify').style.display = 'none';
   socket.emit('song_playing', { attempt: currentAttempt });
 }
 
 function hostPlayLonger() {
   stopClientTimer();
-  if (spotifyPlayer) spotifyPlayer.pause().catch(()=>{});
+  spotifyPause();
   document.getElementById('hostWave').classList.add('off');
   currentAttempt++;
   updateDots(currentAttempt, 'host');
@@ -1000,7 +907,6 @@ function hostPlayLonger() {
   document.getElementById('hostGuessTitle').value = '';
   document.getElementById('hostGuessArtist').value = '';
   document.getElementById('hostGuessBtn').disabled = false;
-  // Host clicks Play manually — no auto-play
 }
 
 function hostSubmitGuess() {
@@ -1010,45 +916,12 @@ function hostSubmitGuess() {
   if (!t && !a) { showErr('hostGuessErr','Enter song name or artist'); return; }
   document.getElementById('hostGuessBtn').disabled = true;
   socket.emit('submit_guess', { titleGuess:t, artistGuess:a });
-
-  // Listen for result once
-  socket.once('guess_result', ({ correct, pts, message }) => {
-    if (correct) {
-      hasGuessed = true;
-      document.getElementById('hostGuessBtn').disabled = true;
-      showToast(`You got it! +${pts} pts`);
-      if (pts >= 8) launchConfetti();
-    } else {
-      document.getElementById('hostGuessBtn').disabled = false;
-      document.getElementById('hostGuessTitle').value = '';
-      document.getElementById('hostGuessArtist').value = '';
-      showErr('hostGuessErr', 'Not quite! Try again.');
-    }
-  });
 }
 
-function hostSkip() {
-  stopClientTimer();
-  if (spotifyPlayer) spotifyPlayer.pause().catch(()=>{});
-  // Trigger reveal via server by exhausting attempts
-  socket.emit('skip_song');
-}
-
-function hostEndGame() {
-  stopClientTimer();
-  if (spotifyPlayer) spotifyPlayer.pause().catch(()=>{});
-  socket.emit('end_game');
-}
-
-function hostNextSong() {
-  if (spotifyPlayer) spotifyPlayer.pause().catch(()=>{});
-  currentSongIdx++;
-  socket.emit('next_song');
-}
-
-function hostPlayAgain() {
-  socket.emit('play_again');
-}
+function hostSkip() { stopClientTimer(); spotifyPause(); socket.emit('skip_song'); }
+function hostEndGame() { stopClientTimer(); spotifyPause(); socket.emit('end_game'); }
+function hostNextSong() { spotifyPause(); currentSongIdx++; socket.emit('next_song'); }
+function hostPlayAgain() { socket.emit('play_again'); }
 
 function updateHostPlayerStatus(players) {
   const c = document.getElementById('hostPlayerStatus'); if(!c)return; c.innerHTML='';
@@ -1060,7 +933,7 @@ function updateHostPlayerStatus(players) {
   });
 }
 
-// ── Player: Game Screen ───────────────────────────────────
+// ── Player Game ───────────────────────────────────────────
 function initPlayerGameScreen() {
   showScreen('sPlayerGame');
   hasGuessed = false;
@@ -1084,13 +957,6 @@ function playerSubmitGuess() {
   if (!t && !a) { showErr('playerGuessErr','Enter song name or artist'); return; }
   document.getElementById('playerGuessBtn').disabled = true;
   socket.emit('submit_guess', { titleGuess:t, artistGuess:a });
-  socket.once('guess_result', ({ correct }) => {
-    if (!correct) {
-      document.getElementById('playerGuessBtn').disabled = false;
-      document.getElementById('playerGuessTitle').value = '';
-      document.getElementById('playerGuessArtist').value = '';
-    }
-  });
 }
 
 function updatePlayerStatus(players) {
@@ -1101,7 +967,6 @@ function updatePlayerStatus(players) {
     d.innerHTML=`<span>${p.name}</span><span>${p.guessedCorrectly?'<span class="guessed-badge">✓</span>':'<span style="color:#444">…</span>'}</span>`;
     c.appendChild(d);
   });
-  // Update my score
   const me = players.find(p=>p.id===myId);
   if (me) document.getElementById('myScore').textContent = (me.score||0)+' pts';
 }
@@ -1118,7 +983,6 @@ function startClientTimer(duration, endTime) {
   tick();
   timerInterval = setInterval(tick, 100);
 }
-
 function stopClientTimer() { if(timerInterval){clearInterval(timerInterval);timerInterval=null;} }
 
 function updateHostTimer(val, max) {
@@ -1127,14 +991,12 @@ function updateHostTimer(val, max) {
   el.style.stroke = val<=5?'#e22134':val<=10?'#f59e0b':'var(--g)';
   document.getElementById('hostTimerNum').textContent = val;
 }
-
 function updatePlayerTimer(val, max) {
   const el = document.getElementById('playerTimerRing'); if(!el)return;
   el.style.strokeDashoffset = 272 - ((val/max)*272);
   el.style.stroke = val<=5?'#e22134':val<=10?'#f59e0b':'var(--g)';
   document.getElementById('playerTimerNum').textContent = val;
 }
-
 function updateDots(attempt, who) {
   const id = who==='host'?'hostDots':'playerDots';
   const c = document.getElementById(id); if(!c)return; c.innerHTML='';
@@ -1143,42 +1005,31 @@ function updateDots(attempt, who) {
 
 // ── Reveal ────────────────────────────────────────────────
 function showReveal(won, song, players, attempt, isLast) {
-  stopClientTimer();
   showScreen('sReveal');
-
   document.getElementById('revealHead').textContent = won ? 'Correct! 🎉' : 'Nobody got it!';
   document.getElementById('revealSub').textContent = won
     ? `Round ${attempt+1} — ${players.filter(p=>p.guessedCorrectly).map(p=>p.name).join(', ')} got it!`
     : 'Better luck next song';
-
   document.getElementById('revealSong').textContent = song.title;
   document.getElementById('revealArtist').textContent = song.artist + (song.releaseYear ? ` · ${song.releaseYear}` : '');
   document.getElementById('spotifyLink').href = `https://open.spotify.com/track/${song.id}`;
-
   if (song.albumArt) {
     document.getElementById('revealImg').src = song.albumArt;
     document.getElementById('revealArt').style.display = 'block';
   } else {
     document.getElementById('revealArt').style.display = 'none';
   }
-
-  // Scores
   const sorted = [...players].sort((a,b)=>(b.score||0)-(a.score||0));
   const sc = document.getElementById('revealScores'); sc.innerHTML='';
   sorted.forEach((p,i) => {
-    const r=document.createElement('div'); r.className='player-row'+(i===0?' lead':'');
-    if(i===0)r.style.cssText='display:flex;align-items:center;justify-content:space-between;padding:.5rem .75rem;background:linear-gradient(90deg,rgba(29,185,84,.15),rgba(29,185,84,.05));border:1px solid rgba(29,185,84,.3);border-radius:10px;margin-bottom:.3rem';
+    const r=document.createElement('div'); r.className='player-row';
+    if(i===0) r.style.cssText='display:flex;align-items:center;justify-content:space-between;padding:.5rem .75rem;background:rgba(29,185,84,.1);border:1px solid rgba(29,185,84,.3);border-radius:10px;margin-bottom:.3rem';
     r.innerHTML=`<span class="name">${MEDALS[i]||''}${p.name}</span><span class="pts">${p.score||0} pts</span>`;
     sc.appendChild(r);
   });
-
   if (won) launchConfetti();
-
-  // Show host button or player wait
   document.getElementById('revealHostBtn').style.display = isHost ? 'block' : 'none';
   document.getElementById('revealPlayerWait').style.display = isHost ? 'none' : 'block';
-
-  // Update next button text
   if (isHost) {
     const btn = document.querySelector('#revealHostBtn .btn');
     if (btn) btn.textContent = isLast ? 'See Final Results ▶' : 'Next Song ▶';
@@ -1190,15 +1041,13 @@ function showGameOver(players) {
   showScreen('sGameOver');
   const sorted = [...players].sort((a,b)=>(b.score||0)-(a.score||0));
   document.getElementById('winnerName').textContent = sorted[0]?.name || '—';
-
   const fc = document.getElementById('finalScores'); fc.innerHTML='';
   sorted.forEach((p,i) => {
-    const r=document.createElement('div'); r.className='player-row'+(i===0?' lead':'');
-    if(i===0)r.style.cssText='display:flex;align-items:center;justify-content:space-between;padding:.5rem .75rem;background:linear-gradient(90deg,rgba(29,185,84,.15),rgba(29,185,84,.05));border:1px solid rgba(29,185,84,.3);border-radius:10px;margin-bottom:.3rem';
+    const r=document.createElement('div'); r.className='player-row';
+    if(i===0) r.style.cssText='display:flex;align-items:center;justify-content:space-between;padding:.5rem .75rem;background:rgba(29,185,84,.1);border:1px solid rgba(29,185,84,.3);border-radius:10px;margin-bottom:.3rem';
     r.innerHTML=`<span class="name">${MEDALS[i]||''}${p.name}</span><span class="pts">${p.score||0} pts</span>`;
     fc.appendChild(r);
   });
-
   document.getElementById('gameOverHostBtns').style.display = isHost?'block':'none';
   document.getElementById('gameOverPlayerMsg').style.display = isHost?'none':'block';
   launchConfetti();
@@ -1225,13 +1074,14 @@ function showErr(id,msg) { const e=document.getElementById(id); if(!e)return; e.
 function showLoading(msg) { document.getElementById('loadingMsg').textContent=msg; document.getElementById('loadingOverlay').classList.add('show'); }
 function hideLoading() { document.getElementById('loadingOverlay').classList.remove('show'); }
 function shuffle(arr) { return arr.sort(()=>Math.random()-.5); }
-
 let toastTimer=null;
 function showToast(msg) {
   const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show');
   if(toastTimer)clearTimeout(toastTimer);
   toastTimer=setTimeout(()=>t.classList.remove('show'),2500);
 }
+function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
+window._lobbyBuilt = false;
 
 // ── Boot ──────────────────────────────────────────────────
 (async function boot() {
@@ -1240,61 +1090,36 @@ function showToast(msg) {
   window.history.replaceState({},'','/');
 
   if (code) {
-    // Returning from Spotify OAuth
-    showLoading('Connecting to Spotify…');
+    showLoading('Logging in to Spotify…');
     try {
       const data = await exchangeCode(code);
       accessToken = data.access_token;
-      refreshToken = data.refresh_token||'';
+      refreshToken = data.refresh_token || '';
       sessionStorage.setItem('at', accessToken);
-      if(refreshToken) sessionStorage.setItem('rt', refreshToken);
-      setTimeout(refreshAccessToken, (data.expires_in-60)*1000);
-
-      // Wait for SDK
-      let w=0;
-      while(!sdkReady&&!window._sdkReady&&w<6000){await sleep(200);w+=200;}
-if(window._sdkReady)sdkReady=true;
-      initSpotifyPlayer();
-      w=0;
-      while(!deviceId&&w<6000){await sleep(300);w+=300;}
-
-      // After Spotify login, restore name and go to home
+      if (refreshToken) sessionStorage.setItem('rt', refreshToken);
+      setTimeout(refreshAccessToken, (data.expires_in - 60) * 1000);
       const pendingName = sessionStorage.getItem('pendingName');
-      if (pendingName) {
-        myName = pendingName;
-        sessionStorage.removeItem('pendingRoom');
-        sessionStorage.removeItem('pendingName');
-        document.getElementById('nameInput').value = myName;
-      }
-      // Spotify is now connected, show home so host can create room
-      showToast('Spotify connected! Create your room.');
+      if (pendingName) { myName = pendingName; document.getElementById('nameInput').value = myName; sessionStorage.removeItem('pendingName'); }
     } catch(e) {
-      showErr('spotifyErr','Login failed: '+e.message);
+      showErr('spotifyErr', 'Login failed: ' + e.message);
     }
     hideLoading();
     showScreen('sHome');
     return;
   }
 
-  // Resume Spotify session if available
   const at = sessionStorage.getItem('at');
   if (at) { accessToken = at; refreshToken = sessionStorage.getItem('rt')||''; }
-
   showScreen('sHome');
 })();
 
-function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
-
-// Input enter keys
+// ── Input enter keys ──────────────────────────────────────
 document.getElementById('nameInput').addEventListener('keydown',e=>{if(e.key==='Enter')goCreate();});
 document.getElementById('codeInput').addEventListener('keydown',e=>{if(e.key==='Enter')joinRoom();});
 document.getElementById('hostGuessTitle').addEventListener('keydown',e=>{if(e.key==='Enter')hostSubmitGuess();});
 document.getElementById('hostGuessArtist').addEventListener('keydown',e=>{if(e.key==='Enter')hostSubmitGuess();});
 document.getElementById('playerGuessTitle').addEventListener('keydown',e=>{if(e.key==='Enter')playerSubmitGuess();});
 document.getElementById('playerGuessArtist').addEventListener('keydown',e=>{if(e.key==='Enter')playerSubmitGuess();});
-
-// Build lobby on first show
-window._lobbyBuilt = false;
 </script>
 </body>
 </html>
