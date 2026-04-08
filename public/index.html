@@ -287,6 +287,11 @@ input:focus{border-color:var(--g)}
       <div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div>
     </div>
 
+    <div id="activatePlayerBanner" style="width:100%;margin-bottom:.5rem;display:none">
+      <button class="btn blue" onclick="activatePlayer()">🔊 Activate Spotify Player</button>
+      <p style="font-size:.7rem;color:var(--m);text-align:center;margin-top:.3rem">Tap once to enable audio playback</p>
+    </div>
+
     <div class="pos-row">
       <button id="posStart" class="btn sec pos-btn" onclick="setPos('start')">▶ From start</button>
       <button id="posMid" class="btn sec pos-btn active" onclick="setPos('middle')">▶ From middle</button>
@@ -451,6 +456,7 @@ const ISRAELI_HITS = {
 const DECADES = ['1960s','1970s','1980s','1990s','2000s','2010s','2020s'];
 const DURS = [10,20,30,40,50];
 const MAX_ATTEMPTS = 5;
+const MAX_ATTEMPTS = 5;
 const MEDALS = ['🥇','🥈','🥉'];
 
 // ── State ─────────────────────────────────────────────────
@@ -476,6 +482,7 @@ let currentSongUri = '';
 let pendingRoomAfterLogin = null;
 let hasGuessed = false;
 let playedIds = new Set();
+let playerActivated = false;
 let currentSongs = [];
 let currentSongIdx = 0;
 
@@ -531,7 +538,7 @@ function connectSocket() {
 
   socket.on('game_start', ({ roundCount: rc, playPosition: pp }) => {
     roundCount = rc; playPosition = pp;
-    currentSongIdx = 0; currentAttempt = 0; hasGuessed = false; playedIds = new Set();
+    currentSongIdx = 0; currentAttempt = 0; hasGuessed = false; playedIds = new Set(); playerActivated = false;
     if (isHost) {
       initHostGameScreen();
     } else {
@@ -567,14 +574,19 @@ function connectSocket() {
 
   socket.on('play_longer', ({ attempt, duration }) => {
     currentAttempt = attempt;
+    updateDots(attempt, isHost ? 'host' : 'player');
     if (isHost) {
+      document.getElementById('hostWave').classList.add('off');
       document.getElementById('hostPlayBtn').disabled = false;
-      document.getElementById('hostPlayBtn').textContent = `▶ Play Clip (${duration}s)`;
+      document.getElementById('hostPlayBtn').textContent = `▶ Play ${duration}s Clip`;
       document.getElementById('hostLongerBtn').disabled = false;
-      document.getElementById('hostPill').textContent = `Round ${attempt+1} — ${duration} seconds`;
+      document.getElementById('hostPill').textContent = `Nobody guessed — play ${duration}s clip`;
       document.getElementById('hostPill').className = 'pill a';
-      updateDots(attempt, 'host');
-      hostPlayClip(); // auto-play longer clip
+    } else {
+      document.getElementById('playerPill').textContent = `Round ${attempt+1} — waiting for host…`;
+      document.getElementById('playerPill').className = 'pill a';
+      document.getElementById('playerWave').classList.add('off');
+      document.getElementById('playerGuessBtn').disabled = false;
     }
   });
 
@@ -881,6 +893,7 @@ function initHostGameScreen() {
   document.getElementById('hostGuessArtist').value = '';
   document.getElementById('hostGuessBtn').disabled = false;
   document.getElementById('hostWave').classList.add('off');
+  document.getElementById('activatePlayerBanner').style.display = playerActivated ? 'none' : 'block';
   hasGuessed = false;
   updateDots(0, 'host');
   updateHostTimer(DURS[0], DURS[0]);
@@ -896,10 +909,26 @@ function setPos(pos) {
   sendConfig();
 }
 
+async function activatePlayer() {
+  // Transfer playback to this device to make it active
+  try {
+    await spotifyFetch('https://api.spotify.com/v1/me/player', {
+      method: 'PUT',
+      body: JSON.stringify({ device_ids: [deviceId], play: false })
+    });
+    showToast('Player activated!');
+    document.getElementById('activatePlayerBanner').style.display = 'none';
+    playerActivated = true;
+  } catch(e) {
+    showToast('Could not activate player');
+  }
+}
+
 async function hostPlayClip() {
   const dur = DURS[currentAttempt];
   const song = currentSongs[currentSongIdx];
   if (!song) return;
+
   document.getElementById('hostPlayBtn').disabled = true;
   document.getElementById('hostPlayBtn').textContent = 'Playing…';
   document.getElementById('hostLongerBtn').disabled = true;
@@ -908,11 +937,35 @@ async function hostPlayClip() {
   document.getElementById('hostPill').textContent = `Round ${currentAttempt+1} — ${dur} seconds`;
 
   try {
-    await spotifyFetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
-      method:'PUT',
+    // First transfer playback to this device
+    if (!playerActivated) {
+      await spotifyFetch('https://api.spotify.com/v1/me/player', {
+        method: 'PUT',
+        body: JSON.stringify({ device_ids: [deviceId], play: false })
+      });
+      playerActivated = true;
+      await sleep(500); // wait for transfer
+    }
+
+    const res = await spotifyFetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
+      method: 'PUT',
       body: JSON.stringify({ uris:[song.uri], position_ms: playPosition==='start'?0:30000 })
     });
-  } catch {}
+
+    if (res.status === 404) {
+      // Device not found — show activate button
+      document.getElementById('activatePlayerBanner').style.display = 'block';
+      document.getElementById('hostPlayBtn').disabled = false;
+      document.getElementById('hostPlayBtn').textContent = '▶ Play Clip';
+      document.getElementById('hostLongerBtn').disabled = false;
+      document.getElementById('hostWave').classList.add('off');
+      playerActivated = false;
+      showToast('Tap "Activate Spotify Player" first');
+      return;
+    }
+  } catch(e) {
+    console.warn('Playback error:', e);
+  }
 
   socket.emit('song_playing', { attempt: currentAttempt });
 }
@@ -924,15 +977,16 @@ function hostPlayLonger() {
   currentAttempt++;
   updateDots(currentAttempt, 'host');
   if (currentAttempt >= MAX_ATTEMPTS) { socket.emit('skip_song'); return; }
-  document.getElementById('hostPill').textContent = `Round ${currentAttempt+1} — ${DURS[currentAttempt]} seconds`;
+  const dur = DURS[currentAttempt];
+  document.getElementById('hostPill').textContent = `Round ${currentAttempt+1} — click Play for ${dur}s clip`;
   document.getElementById('hostPill').className = 'pill a';
   document.getElementById('hostPlayBtn').disabled = false;
-  document.getElementById('hostPlayBtn').textContent = `▶ Play Clip (${DURS[currentAttempt]}s)`;
+  document.getElementById('hostPlayBtn').textContent = `▶ Play ${dur}s Clip`;
   document.getElementById('hostLongerBtn').disabled = false;
   document.getElementById('hostGuessTitle').value = '';
   document.getElementById('hostGuessArtist').value = '';
   document.getElementById('hostGuessBtn').disabled = false;
-  hostPlayClip();
+  // Host clicks Play manually — no auto-play
 }
 
 function hostSubmitGuess() {
