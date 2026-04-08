@@ -111,13 +111,13 @@ function onTimerEnd(room) {
   if (room.currentAttempt >= MAX_ATTEMPTS) {
     revealSong(room, false);
   } else {
-    // Tell host to play longer clip
+    // Tell host to play longer clip — host clicks Play to continue
     io.to(room.code).emit('play_longer', {
       attempt: room.currentAttempt,
       duration: DURS[room.currentAttempt]
     });
     broadcastRoom(room);
-    startTimer(room, DURS[room.currentAttempt]);
+    // Do NOT auto-start timer — wait for host to click Play
   }
 }
 
@@ -186,19 +186,26 @@ io.on('connection', (socket) => {
     Object.values(room.players).forEach(p => { p.guess = ''; p.artistGuess = ''; p.guessedCorrectly = false; });
 
     io.to(room.code).emit('game_start', {
-      song: null, // don't reveal song info yet
+      song: null,
       roundCount: room.roundCount,
       playPosition: room.playPosition,
     });
     broadcastRoom(room);
-    startTimer(room, DURS[0]);
+    // Timer starts only when host clicks Play, not automatically
   });
 
-  // Host signals song is playing (for sync)
+  // Host signals song is playing — NOW start the timer
   socket.on('song_playing', ({ attempt }) => {
     const room = getRoomOf(socket.id);
     if (!room || room.hostId !== socket.id) return;
-    io.to(room.code).emit('song_playing', { attempt, duration: DURS[attempt] });
+    room.currentAttempt = attempt;
+    // Reset all guesses for new attempt
+    if (attempt === 0) {
+      Object.values(room.players).forEach(p => { p.guessedCorrectly = false; });
+    }
+    const duration = DURS[attempt];
+    io.to(room.code).emit('song_playing', { attempt, duration });
+    startTimer(room, duration);
   });
 
   // Player submits guess
@@ -262,7 +269,7 @@ io.on('connection', (socket) => {
       playPosition: room.playPosition,
     });
     broadcastRoom(room);
-    startTimer(room, DURS[0]);
+    // Timer starts when host clicks Play
   });
 
   // Host plays again (new game)
