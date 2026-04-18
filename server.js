@@ -338,6 +338,19 @@ io.on('connection', (socket) => {
     broadcastRoom(room);
   });
 
+  // Host passes — marks themselves as done without scoring
+  socket.on('host_pass', () => {
+    const room = getRoomOf(socket.id);
+    if (!room || room.hostId !== socket.id) return;
+    const host = room.players[socket.id];
+    if (!host || host.guessedCorrectly) return;
+    host.guessedCorrectly = true; // mark as done (no points)
+    broadcastRoom(room);
+    // Check if all players are done
+    const allDone = Object.values(room.players).every(p => p.guessedCorrectly);
+    if (allDone) setTimeout(() => revealSong(room, true), 1500);
+  });
+
   // Skip current song
   socket.on('skip_song', () => {
     const room = getRoomOf(socket.id);
