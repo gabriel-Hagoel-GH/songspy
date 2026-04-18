@@ -343,7 +343,10 @@ input:focus{border-color:var(--g)}
         </div>
       </div>
     </div>
-    <button class="btn" style="margin-bottom:.4rem" id="hostGuessBtn" onclick="hostSubmitGuess()">Guess!</button>
+    <div style="display:flex;gap:.5rem;margin-bottom:.4rem">
+      <button class="btn" style="flex:2" id="hostGuessBtn" onclick="hostSubmitGuess()">Guess!</button>
+      <button class="btn sec" style="flex:1;font-size:.78rem" id="hostDontKnowBtn" onclick="hostDontKnow()">I don't know</button>
+    </div>
     <div class="err" id="hostGuessErr"></div>
 
     <button class="btn sec" style="font-size:.78rem;margin-top:.2rem" onclick="hostSkip()">Skip song ⏭</button>
@@ -720,6 +723,7 @@ function connectSocket() {
         showErr('playerGuessErr', 'Not quite! Try again.');
       } else {
         document.getElementById('hostGuessBtn').disabled = false;
+  document.getElementById('hostDontKnowBtn').disabled = false;
         document.getElementById('hostGuessTitle').value = '';
         document.getElementById('hostGuessArtist').value = '';
         showErr('hostGuessErr', 'Not quite! Try again.');
@@ -983,6 +987,16 @@ function hostSubmitGuess() {
   if (!t && !a) { showErr('hostGuessErr','Enter song name or artist'); return; }
   document.getElementById('hostGuessBtn').disabled = true;
   socket.emit('submit_guess', { titleGuess:t, artistGuess:a });
+}
+
+function hostDontKnow() {
+  // Mark host as having guessed (without scoring) so game can proceed
+  hasGuessed = true;
+  document.getElementById('hostGuessBtn').disabled = true;
+  document.getElementById('hostDontKnowBtn').disabled = true;
+  document.getElementById('hostGuessTitle').value = '';
+  document.getElementById('hostGuessArtist').value = '';
+  socket.emit('host_pass'); // tell server host is passing
 }
 
 function hostSkip() { stopClientTimer(); spotifyPause(); socket.emit('skip_song'); }
