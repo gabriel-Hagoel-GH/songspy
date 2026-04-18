@@ -17,7 +17,8 @@ app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.ht
 const rooms = {}; // roomCode -> room object
 
 function makeRoom(hostId, hostName) {
-  const code = Math.random().toString(36).slice(2,6).toUpperCase();
+  let code;
+  do { code = Math.random().toString(36).slice(2,6).toUpperCase(); } while (rooms[code]);
   rooms[code] = {
     code,
     hostId,
@@ -58,6 +59,9 @@ function broadcastRoom(room) {
     roundCount: room.roundCount,
     currentAttempt: room.currentAttempt,
     songCount: room.songs.length,
+    selectedGenres: room.selectedGenres,
+    selectedDecades: room.selectedDecades,
+    israeliMode: room.israeliMode,
   });
 }
 
@@ -176,6 +180,10 @@ io.on('connection', (socket) => {
   socket.on('songs_ready', ({ songs }) => {
     const room = getRoomOf(socket.id);
     if (!room || room.hostId !== socket.id) return;
+    if (Object.keys(room.players).length < 2) {
+      socket.emit('error', 'Need at least 2 players to start');
+      return;
+    }
     room.songs = songs.slice(0, room.roundCount);
     room.currentSongIdx = 0;
     room.currentAttempt = 0;
@@ -198,11 +206,11 @@ io.on('connection', (socket) => {
   socket.on('song_playing', ({ attempt }) => {
     const room = getRoomOf(socket.id);
     if (!room || room.hostId !== socket.id) return;
+    // Prevent double timer: ignore if same attempt already running
+    if (room.timerInterval && room.currentAttempt === attempt) return;
     room.currentAttempt = attempt;
-    // Reset all guesses for new attempt
-    if (attempt === 0) {
-      Object.values(room.players).forEach(p => { p.guessedCorrectly = false; });
-    }
+    // Reset guesses for every new play
+    Object.values(room.players).forEach(p => { p.guessedCorrectly = false; });
     const duration = DURS[attempt];
     io.to(room.code).emit('song_playing', { attempt, duration });
     startTimer(room, duration);
@@ -281,6 +289,9 @@ io.on('connection', (socket) => {
     room.currentSongIdx = 0;
     room.currentAttempt = 0;
     room.currentSong = null;
+    room.selectedGenres = [];
+    room.selectedDecades = [];
+    room.israeliMode = false;
     Object.values(room.players).forEach(p => { p.score = 0; p.guess = ''; p.artistGuess = ''; p.guessedCorrectly = false; });
     io.to(room.code).emit('back_to_lobby');
     broadcastRoom(room);
@@ -322,6 +333,18 @@ io.on('connection', (socket) => {
     }
   });
 });
+
+// Clean up empty/stale rooms every 30 minutes
+setInterval(() => {
+  const cutoff = Date.now() - 30 * 60 * 1000;
+  Object.keys(rooms).forEach(code => {
+    const room = rooms[code];
+    if (Object.keys(room.players).length === 0) {
+      if (room.timerInterval) clearInterval(room.timerInterval);
+      delete rooms[code];
+    }
+  });
+}, 30 * 60 * 1000);
 
 httpServer.listen(PORT, () => {
   console.log(`\n🎵 SongSpy Multiplayer running on port ${PORT}\n`);
