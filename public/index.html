@@ -396,7 +396,10 @@ input:focus{border-color:var(--g)}
           </div>
         </div>
       </div>
-      <button class="btn" id="playerGuessBtn" onclick="playerSubmitGuess()">Guess!</button>
+      <div style="display:flex;gap:.5rem">
+        <button class="btn" style="flex:2" id="playerGuessBtn" onclick="playerSubmitGuess()">Guess!</button>
+        <button class="btn sec" style="flex:1;font-size:.78rem" id="playerDontKnowBtn" onclick="playerDontKnow()">I don't know</button>
+      </div>
       <div class="err" id="playerGuessErr" style="margin-top:.3rem"></div>
     </div>
 
@@ -711,6 +714,7 @@ function connectSocket() {
         document.getElementById('playerGuessArea').style.display = 'none';
         document.getElementById('playerGuessedMsg').style.display = 'block';
         document.getElementById('playerGuessedPts').textContent = `+${pts} pts`;
+        document.getElementById('playerGuessedMsg').querySelector('p').textContent = 'Waiting for others…';
       } else {
         showToast(`You got it! +${pts} pts`);
       }
@@ -1029,12 +1033,22 @@ function initPlayerGameScreen() {
   document.getElementById('playerGuessTitle').value='';
   document.getElementById('playerGuessArtist').value='';
   document.getElementById('playerGuessBtn').disabled=false;
+  document.getElementById('playerDontKnowBtn').disabled=false;
   ['playerTitleList','playerArtistList'].forEach(id => hideAcList(id));
   document.getElementById('playerWave').classList.add('off');
   document.getElementById('playerPill').textContent='Waiting for host to play…';
   document.getElementById('playerPill').className='pill a';
   updateDots(0,'player');
   updatePlayerTimer(DURS[0],DURS[0]);
+}
+
+function playerDontKnow() {
+  hasGuessed = true;
+  document.getElementById('playerGuessArea').style.display = 'none';
+  document.getElementById('playerGuessedMsg').style.display = 'block';
+  document.getElementById('playerGuessedPts').textContent = '';
+  document.getElementById('playerGuessedMsg').querySelector('p').textContent = 'Passed — waiting for others…';
+  socket.emit('player_pass');
 }
 
 function playerSubmitGuess() {
