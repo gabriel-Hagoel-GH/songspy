@@ -11,6 +11,40 @@ const PORT = process.env.PORT || 8888;
 
 // Serve static files
 app.use(express.static(path.join(__dirname, 'public')));
+app.use(require('express').json());
+
+// Spotify search proxy — players search via server using host token
+app.get('/api/search', async (req, res) => {
+  const { q, type, roomCode } = req.query;
+  if (!q || !type || !roomCode) return res.json({ items: [] });
+  const room = rooms[roomCode.toUpperCase()];
+  if (!room || !room.spotifyToken) return res.json({ items: [] });
+
+  try {
+    const url = `https://api.spotify.com/v1/search?q=${encodeURIComponent(q)}&type=${type}&limit=6&market=IL`;
+    const r = await fetch(url, { headers: { Authorization: 'Bearer ' + room.spotifyToken } });
+    if (!r.ok) { res.json({ items: [] }); return; }
+    const data = await r.json();
+    let items = [];
+    if (type === 'track') {
+      items = (data.tracks?.items || []).map(t => ({
+        name: t.name,
+        sub: t.artists.map(a => a.name).join(', '),
+        img: t.album?.images?.[2]?.url || t.album?.images?.[0]?.url || ''
+      }));
+    } else {
+      items = (data.artists?.items || []).map(a => ({
+        name: a.name,
+        sub: a.genres?.slice(0,2).join(', ') || '',
+        img: a.images?.[2]?.url || a.images?.[0]?.url || ''
+      }));
+    }
+    res.json({ items });
+  } catch(e) {
+    res.json({ items: [] });
+  }
+});
+
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 // ── Game State ────────────────────────────────────────────
@@ -174,6 +208,13 @@ io.on('connection', (socket) => {
     room.israeliMode = israeliMode;
     room.playPosition = playPosition;
     broadcastRoom(room);
+  });
+
+  // Host stores their Spotify token for search proxy
+  socket.on('host_token', ({ token }) => {
+    const room = getRoomOf(socket.id);
+    if (!room || room.hostId !== socket.id) return;
+    room.spotifyToken = token;
   });
 
   // Host sends fetched songs
