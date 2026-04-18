@@ -603,12 +603,17 @@ function connectSocket() {
 
   socket.on('room_created', ({ code, playerId }) => {
     myId = playerId; roomCode = code;
+    sessionStorage.setItem('roomCode', code);
+    sessionStorage.setItem('isHost', 'true');
     document.getElementById('lobbyCode').textContent = code;
     document.getElementById('playerCount').textContent = '1';
     hideLoading();
     const at = sessionStorage.getItem('at');
-    if (at) { accessToken = at; showScreen('sLobby'); }
-    else showScreen('sSpotify');
+    if (at) {
+      accessToken = at;
+      socket.emit('host_token', { token: at });
+      showScreen('sLobby');
+    } else showScreen('sSpotify');
   });
 
   socket.on('room_joined', ({ code, playerId }) => {
@@ -1162,28 +1167,37 @@ function debounce(key, fn, delay=300) {
 }
 
 async function searchSuggestions(query, type) {
-  // type: 'track' or 'artist'
   if (!query || query.length < 2) return [];
   const cacheKey = type + ':' + query.toLowerCase();
   if (acCache[cacheKey]) return acCache[cacheKey];
   try {
-    const r = await spotifyFetch(
-      `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=${type}&limit=6&market=IL`
-    );
-    const data = await r.json();
     let results = [];
-    if (type === 'track') {
-      results = (data.tracks?.items || []).map(t => ({
-        name: t.name,
-        sub: t.artists.map(a=>a.name).join(', '),
-        img: t.album?.images?.[2]?.url || t.album?.images?.[0]?.url || ''
-      }));
+    if (isHost && accessToken) {
+      // Host: call Spotify directly
+      const r = await spotifyFetch(
+        `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=${type}&limit=6&market=IL`
+      );
+      const data = await r.json();
+      if (type === 'track') {
+        results = (data.tracks?.items || []).map(t => ({
+          name: t.name,
+          sub: t.artists.map(a=>a.name).join(', '),
+          img: t.album?.images?.[2]?.url || t.album?.images?.[0]?.url || ''
+        }));
+      } else {
+        results = (data.artists?.items || []).map(a => ({
+          name: a.name,
+          sub: a.genres?.slice(0,2).join(', ') || '',
+          img: a.images?.[2]?.url || a.images?.[0]?.url || ''
+        }));
+      }
     } else {
-      results = (data.artists?.items || []).map(a => ({
-        name: a.name,
-        sub: a.genres?.slice(0,2).join(', ') || '',
-        img: a.images?.[2]?.url || a.images?.[0]?.url || ''
-      }));
+      // Player: use server proxy with host token
+      const r = await fetch(
+        `/api/search?q=${encodeURIComponent(query)}&type=${type}&roomCode=${roomCode}`
+      );
+      const data = await r.json();
+      results = data.items || [];
     }
     acCache[cacheKey] = results;
     return results;
@@ -1302,6 +1316,8 @@ window._lobbyBuilt = false;
       if (pendingName) { myName = pendingName; document.getElementById('nameInput').value = myName; sessionStorage.removeItem('pendingName'); }
       const el = document.getElementById('spotifyStatus');
       if (el) el.textContent = '✓ Spotify connected';
+      // Re-send token to server if already in a room
+      if (socket && roomCode) socket.emit('host_token', { token: accessToken });
     } catch(e) {
       showErr('spotifyErr', 'Login failed: ' + e.message);
     }
