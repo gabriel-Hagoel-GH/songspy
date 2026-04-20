@@ -13,6 +13,22 @@ const PORT = process.env.PORT || 8888;
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(require('express').json());
 
+// Spotify recommendations proxy
+app.get('/api/recommendations', async (req, res) => {
+  const { genre, roomCode } = req.query;
+  if (!genre || !roomCode) return res.json({ tracks: [] });
+  const room = rooms[roomCode.toUpperCase()];
+  if (!room || !room.spotifyToken) return res.json({ tracks: [] });
+  try {
+    const params = new URLSearchParams({ seed_genres: genre, limit: 10, market: 'IL', target_popularity: 70, min_popularity: 40 });
+    const r = await fetch(`https://api.spotify.com/v1/recommendations?${params}`, {
+      headers: { Authorization: 'Bearer ' + room.spotifyToken }
+    });
+    const data = await r.json();
+    res.json({ tracks: data.tracks || [] });
+  } catch { res.json({ tracks: [] }); }
+});
+
 // Spotify search proxy — players search via server using host token
 app.get('/api/search', async (req, res) => {
   const { q, type, roomCode } = req.query;
@@ -225,7 +241,8 @@ io.on('connection', (socket) => {
       socket.emit('error', 'Need at least 2 players to start');
       return;
     }
-    room.songs = songs.slice(0, room.roundCount);
+    // Keep full pool — game picks from it as rounds progress
+    room.songs = songs; // full shuffled pool from client
     room.currentSongIdx = 0;
     room.currentAttempt = 0;
     room.phase = 'playing';
