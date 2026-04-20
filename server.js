@@ -380,6 +380,26 @@ io.on('connection', (socket) => {
     if (allDone) setTimeout(() => revealSong(room, true), 1500);
   });
 
+  // Host requests longer clip — server drives attempt increment
+  socket.on('request_longer', () => {
+    const room = getRoomOf(socket.id);
+    if (!room || room.hostId !== socket.id) return;
+    if (room.timerInterval) { clearInterval(room.timerInterval); room.timerInterval = null; }
+    room.currentAttempt++;
+    if (room.currentAttempt >= MAX_ATTEMPTS) {
+      revealSong(room, false);
+      return;
+    }
+    const duration = DURS[room.currentAttempt];
+    // Reset guesses so everyone can guess again
+    Object.values(room.players).forEach(p => { p.guessedCorrectly = false; });
+    io.to(room.code).emit('play_longer', {
+      attempt: room.currentAttempt,
+      duration
+    });
+    broadcastRoom(room);
+  });
+
   // Skip current song
   socket.on('skip_song', () => {
     const room = getRoomOf(socket.id);
