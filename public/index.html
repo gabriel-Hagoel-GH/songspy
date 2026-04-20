@@ -9,12 +9,101 @@
 <meta name="apple-mobile-web-app-title" content="SongSpy"/>
 <link rel="manifest" href="manifest.json"/>
 <title>SongSpy</title>
-<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500&family=Fredoka+One&family=Nunito:wght@400;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
 <!-- Spotify SDK removed — using Connect API instead -->
 <script src="/socket.io/socket.io.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-:root{--g:#1DB954;--g2:#1ed760;--d:#121212;--d2:#1e1e1e;--d3:#2a2a2a;--m:#b3b3b3;--ora:#e67e22;--blue:#3a86ff}
+:root{--g:#1DB954;--g2:#1ed760;--d:#121212;--d2:#1e1e1e;--d3:#2a2a2a;--m:#b3b3b3;--ora:#e67e22;--blue:#3a86ff;--rad:14px;--rad-btn:999px;--title-font:'Bebas Neue',sans-serif;--body-font:'DM Sans',sans-serif;--btn-color:#000;--shadow:0 20px 60px rgba(0,0,0,.7)}
+
+/* ── PARTY theme ──────────────────────────────────────────── */
+body.theme-party{--g:#ff6b9d;--g2:#ff8fab;--d:#1a0533;--d2:#2d0a4e;--d3:#3d1466;--m:#d4b0f0;--ora:#ff9500;--blue:#00d4ff;--btn-color:#fff;--rad:18px;--rad-btn:16px;--title-font:'Fredoka One',cursive;--body-font:'Nunito',sans-serif}
+body.theme-party #app{background:linear-gradient(160deg,#1a0533 0%,#2d0a4e 50%,#1a0533 100%)}
+body.theme-party body{background:linear-gradient(135deg,#0d0020,#1a0533)}
+body.theme-party h1{background:linear-gradient(90deg,#ff6b9d,#c44dff,#00d4ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;letter-spacing:3px}
+body.theme-party h2{color:var(--g)}
+body.theme-party .btn{border-radius:var(--rad-btn);font-family:var(--body-font);font-weight:700;background:linear-gradient(135deg,#ff6b9d,#c44dff);color:#fff;box-shadow:0 4px 15px rgba(255,107,157,.4)}
+body.theme-party .btn.sec{background:rgba(255,255,255,.08);color:#d4b0f0;border:1.5px solid rgba(255,255,255,.15);box-shadow:none}
+body.theme-party .btn.ora{background:linear-gradient(135deg,#ff9500,#ff6b00);color:#fff;box-shadow:0 4px 15px rgba(255,149,0,.4)}
+body.theme-party .btn.blue{background:linear-gradient(135deg,#00d4ff,#0084ff);color:#fff;box-shadow:0 4px 15px rgba(0,212,255,.35)}
+body.theme-party .card{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:var(--rad)}
+body.theme-party .pick{background:rgba(255,255,255,.06);border:1.5px solid rgba(255,255,255,.1);color:#d4b0f0;border-radius:10px}
+body.theme-party .pick.on{background:rgba(255,107,157,.18);border-color:#ff6b9d;color:#ff6b9d}
+body.theme-party input[type=text]{background:rgba(255,255,255,.07);border-color:rgba(255,255,255,.15);color:#fff;border-radius:12px}
+body.theme-party input:focus{border-color:#ff6b9d}
+body.theme-party .tr-fg{stroke:var(--g)}
+body.theme-party .bar{background:var(--g)}
+body.theme-party .room-code{background:linear-gradient(90deg,#ff6b9d,#c44dff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+body.theme-party .rbox{background:linear-gradient(135deg,rgba(255,107,157,.15),rgba(196,77,255,.08));border-color:rgba(255,107,157,.3)}
+body.theme-party .rtitle{color:#ff6b9d}
+body.theme-party .winner-name{color:#ff6b9d}
+body.theme-party .pts-flash{color:#ff6b9d}
+body.theme-party .round-btn.active,.body.theme-party .pos-btn.active{background:linear-gradient(135deg,#ff6b9d,#c44dff);color:#fff;border-color:#ff6b9d}
+body.theme-party .autocomplete-list{background:#2d0a4e;border-color:rgba(255,107,157,.3)}
+body.theme-party .autocomplete-item:hover,.body.theme-party .autocomplete-item.active{background:rgba(255,107,157,.1)}
+body.theme-party #toast{background:#2d0a4e;border-color:rgba(255,107,157,.3)}
+body.theme-party .pill.g{background:rgba(255,107,157,.15);color:#ff6b9d;border-color:rgba(255,107,157,.3)}
+body.theme-party .pill.a{background:rgba(255,149,0,.15);color:#ff9500;border-color:rgba(255,149,0,.3)}
+body.theme-party .host-badge,.body.theme-party .guessed-badge{background:rgba(255,107,157,.2);color:#ff6b9d}
+body.theme-party .divider{background:rgba(255,255,255,.08)}
+body.theme-party .spinner{border-color:rgba(255,107,157,.3);border-top-color:#ff6b9d}
+body.theme-party .pos-btn.active{background:linear-gradient(135deg,#ff6b9d,#c44dff);color:#fff;border-color:#ff6b9d}
+body.theme-party .round-btn.active{background:linear-gradient(135deg,#ff6b9d,#c44dff);color:#fff;border-color:#ff6b9d}
+
+/* ── PRO theme ────────────────────────────────────────────── */
+body.theme-pro{--g:#2563eb;--g2:#3b82f6;--d:#f8fafc;--d2:#f1f5f9;--d3:#e2e8f0;--m:#64748b;--ora:#f59e0b;--blue:#0ea5e9;--btn-color:#fff;--rad:12px;--rad-btn:8px;--title-font:'Inter',sans-serif;--body-font:'Inter',sans-serif}
+body.theme-pro{background:#e2e8f0;color:#1e293b}
+body.theme-pro #app{background:#f8fafc;box-shadow:0 4px 24px rgba(0,0,0,.08)}
+body.theme-pro h1{font-family:'Inter',sans-serif;font-size:2.2rem;font-weight:800;color:#1e293b;letter-spacing:-1px;-webkit-text-fill-color:#1e293b}
+body.theme-pro h2{font-family:'Inter',sans-serif;font-weight:700;color:#2563eb}
+body.theme-pro h3{font-family:'Inter',sans-serif;color:#1e293b}
+body.theme-pro .sub{color:#64748b}
+body.theme-pro .ver{color:#94a3b8}
+body.theme-pro .btn{border-radius:var(--rad-btn);font-family:'Inter',sans-serif;font-weight:600;background:#2563eb;color:#fff;box-shadow:0 1px 3px rgba(37,99,235,.2)}
+body.theme-pro .btn:hover{background:#1d4ed8}
+body.theme-pro .btn.sec{background:#fff;color:#374151;border:1.5px solid #d1d5db;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+body.theme-pro .btn.ora{background:#f59e0b;color:#fff}
+body.theme-pro .btn.blue{background:#0ea5e9;color:#fff}
+body.theme-pro .btn.danger{background:#dc2626;color:#fff}
+body.theme-pro .card{background:#fff;border:1px solid #e2e8f0;border-radius:var(--rad);box-shadow:0 1px 3px rgba(0,0,0,.06)}
+body.theme-pro .lbl{color:#6b7280}
+body.theme-pro input[type=text]{background:#fff;border:1.5px solid #d1d5db;color:#1e293b;border-radius:8px}
+body.theme-pro input:focus{border-color:#2563eb}
+body.theme-pro input::placeholder{color:#9ca3af}
+body.theme-pro .pick{background:#fff;border:1.5px solid #d1d5db;color:#374151;border-radius:8px}
+body.theme-pro .pick.on{background:#eff6ff;border-color:#2563eb;color:#2563eb}
+body.theme-pro .player-row{background:#f1f5f9;border-radius:10px}
+body.theme-pro .player-row .name{color:#1e293b}
+body.theme-pro .player-row .pts{color:#2563eb}
+body.theme-pro .host-badge{background:#eff6ff;color:#2563eb}
+body.theme-pro .guessed-badge{background:#eff6ff;color:#2563eb}
+body.theme-pro .dot{background:#e2e8f0;border-color:#d1d5db}
+body.theme-pro .dot.fail{background:#dc2626;border-color:#dc2626}
+body.theme-pro .tr-bg{stroke:#e2e8f0}
+body.theme-pro .tr-fg{stroke:#2563eb}
+body.theme-pro .bar{background:#2563eb}
+body.theme-pro .tnum{color:#1e293b}
+body.theme-pro .room-code{color:#2563eb}
+body.theme-pro .rbox{background:linear-gradient(135deg,#eff6ff,#dbeafe);border:1px solid #bfdbfe}
+body.theme-pro .rtitle{color:#2563eb;font-family:'Inter',sans-serif;font-weight:800}
+body.theme-pro .rartist{color:#64748b}
+body.theme-pro .winner-name{color:#2563eb;font-family:'Inter',sans-serif;font-weight:800}
+body.theme-pro .pts-flash{color:#2563eb;font-family:'Inter',sans-serif}
+body.theme-pro .pill.g{background:#eff6ff;color:#2563eb;border-color:#bfdbfe}
+body.theme-pro .pill.a{background:#fffbeb;color:#d97706;border-color:#fde68a}
+body.theme-pro .divider{background:#e2e8f0}
+body.theme-pro .topbar .song-info{color:#64748b}
+body.theme-pro .err{color:#dc2626}
+body.theme-pro .autocomplete-list{background:#fff;border-color:#d1d5db;box-shadow:0 4px 12px rgba(0,0,0,.08)}
+body.theme-pro .autocomplete-item{border-color:#f1f5f9}
+body.theme-pro .autocomplete-item:hover,.body.theme-pro .autocomplete-item.active{background:#f8fafc}
+body.theme-pro .ac-name{color:#1e293b}
+body.theme-pro .ac-sub{color:#64748b}
+body.theme-pro #toast{background:#1e293b;color:#fff;border-color:#334155}
+body.theme-pro #loadingOverlay{background:rgba(248,250,252,.9)}
+body.theme-pro .spinner{border-color:#e2e8f0;border-top-color:#2563eb}
+body.theme-pro .pos-btn.active{background:#2563eb;color:#fff;border-color:#2563eb}
+body.theme-pro .round-btn.active{background:#2563eb;color:#fff;border-color:#2563eb}
 html,body{height:100%;overflow:hidden}
 body{background:#000;display:flex;align-items:center;justify-content:center;font-family:'DM Sans',sans-serif;color:#fff}
 #app{background:var(--d);width:100%;max-width:480px;height:100vh;max-height:860px;border-radius:0;overflow:hidden;display:flex;flex-direction:column;position:relative}
@@ -182,10 +271,23 @@ input:focus{border-color:var(--g)}
   <!-- ══ SCREEN: HOME ══ -->
   <div class="screen active" id="sHome">
     <div style="margin:auto;text-align:center;width:100%">
-      <div style="font-size:4.5rem;margin-bottom:.25rem">🎵</div>
-      <h1>SongSpy</h1>
+      <div id="homeIcon" style="font-size:4.5rem;margin-bottom:.25rem">🎵</div>
+      <h1 id="homeTitle">SongSpy</h1>
       <div class="ver">v1.0 multiplayer</div>
       <p class="sub">The multiplayer music guessing game</p>
+
+      <!-- Theme picker -->
+      <div style="display:flex;gap:.4rem;margin-bottom:1rem;width:100%">
+        <button class="theme-btn active" id="themeDefault" onclick="setTheme('default')" style="flex:1;padding:.5rem .2rem;border-radius:10px;border:2px solid var(--g);background:rgba(29,185,84,.1);color:var(--g);font-size:.72rem;font-weight:600;cursor:pointer;font-family:var(--body-font);transition:all .2s">
+          🎵 Default
+        </button>
+        <button class="theme-btn" id="themeParty" onclick="setTheme('party')" style="flex:1;padding:.5rem .2rem;border-radius:10px;border:2px solid #444;background:transparent;color:#888;font-size:.72rem;font-weight:600;cursor:pointer;font-family:var(--body-font);transition:all .2s">
+          🎉 Party
+        </button>
+        <button class="theme-btn" id="themePro" onclick="setTheme('pro')" style="flex:1;padding:.5rem .2rem;border-radius:10px;border:2px solid #444;background:transparent;color:#888;font-size:.72rem;font-weight:600;cursor:pointer;font-family:var(--body-font);transition:all .2s">
+          💼 Pro
+        </button>
+      </div>
 
       <div class="card" style="margin-bottom:.6rem">
         <span class="lbl">Your name</span>
@@ -330,10 +432,7 @@ input:focus{border-color:var(--g)}
     <div class="guess-grid" style="margin:.4rem 0 .4rem">
       <div>
         <span class="lbl" style="font-size:.65rem">Song <span style="color:var(--g)">(+10→2)</span></span>
-        <div class="autocomplete-wrap">
-          <input type="text" id="hostGuessTitle" placeholder="Song title..." style="font-size:.85rem" autocomplete="off"/>
-          <div class="autocomplete-list" id="hostTitleList" style="display:none"></div>
-        </div>
+        <input type="text" id="hostGuessTitle" placeholder="Song title..." style="font-size:.85rem"/>
       </div>
       <div>
         <span class="lbl" style="font-size:.65rem">Artist <span style="color:var(--g)">(+5→1)</span></span>
@@ -383,10 +482,7 @@ input:focus{border-color:var(--g)}
       <div class="guess-grid" style="margin-bottom:.5rem">
         <div>
           <span class="lbl">Song <span style="color:var(--g)">(+10→2)</span></span>
-          <div class="autocomplete-wrap">
-            <input type="text" id="playerGuessTitle" placeholder="Song title..." autocomplete="off"/>
-            <div class="autocomplete-list" id="playerTitleList" style="display:none"></div>
-          </div>
+          <input type="text" id="playerGuessTitle" placeholder="Song title..."/>
         </div>
         <div>
           <span class="lbl">Artist <span style="color:var(--g)">(+5→1)</span></span>
@@ -714,6 +810,11 @@ function connectSocket() {
       document.getElementById('hostLongerBtn').disabled = false;
       document.getElementById('hostPill').textContent = `Nobody guessed — play ${duration}s clip`;
       document.getElementById('hostPill').className = 'pill a';
+      document.getElementById('hostGuessTitle').value = '';
+      document.getElementById('hostGuessArtist').value = '';
+      document.getElementById('hostGuessBtn').disabled = false;
+      document.getElementById('hostDontKnowBtn').disabled = false;
+      hasGuessed = false;
     } else {
       document.getElementById('playerPill').textContent = `Round ${attempt+1} of 5 — listen again, then guess!`;
       document.getElementById('playerPill').className = 'pill a';
@@ -724,6 +825,8 @@ function connectSocket() {
       document.getElementById('playerGuessTitle').value = '';
       document.getElementById('playerGuessArtist').value = '';
       document.getElementById('playerGuessBtn').disabled = false;
+      document.getElementById('playerDontKnowBtn').disabled = false;
+      hasGuessed = false;
     }
   });
 
@@ -746,6 +849,7 @@ function connectSocket() {
         document.getElementById('playerGuessTitle').value = '';
         document.getElementById('playerGuessArtist').value = '';
         document.getElementById('playerGuessBtn').disabled = false;
+        document.getElementById('playerDontKnowBtn').disabled = false;
         showErr('playerGuessErr', 'Not quite! Try again.');
       } else {
         document.getElementById('hostGuessBtn').disabled = false;
@@ -770,7 +874,12 @@ function connectSocket() {
   });
 
   socket.on('game_over', ({ players }) => { stopClientTimer(); spotifyPause(); showGameOver(players); });
-  socket.on('back_to_lobby', () => { playedIds = new Set(); currentSongs = []; showScreen(isHost ? 'sLobby' : 'sPlayerLobby'); });
+  socket.on('back_to_lobby', () => {
+    playedIds = new Set(); currentSongs = [];
+    selectedGenres = []; selectedDecades = []; israeliMode = false;
+    window._lobbyBuilt = false;
+    showScreen(isHost ? 'sLobby' : 'sPlayerLobby');
+  });
   socket.on('host_left', () => { showToast('Host left the game'); leaveRoom(); });
 }
 
@@ -998,7 +1107,7 @@ function initHostGameScreen() {
   document.getElementById('hostGuessBtn').disabled = false;
   document.getElementById('hostWave').classList.add('off');
   document.getElementById('hostOpenSpotify').style.display = 'none';
-  ['hostTitleList','hostArtistList'].forEach(id => hideAcList(id));
+  hideAcList('hostArtistList');
   hasGuessed = false;
   updateDots(0, 'host');
   updateHostTimer(DURS[0], DURS[0]);
@@ -1059,19 +1168,11 @@ function hostPlayLonger() {
   stopClientTimer();
   spotifyPause();
   document.getElementById('hostWave').classList.add('off');
-  currentAttempt++;
-  updateDots(currentAttempt, 'host');
-  if (currentAttempt >= MAX_ATTEMPTS) { socket.emit('skip_song'); return; }
-  const dur = DURS[currentAttempt];
-  document.getElementById('hostPill').textContent = `Round ${currentAttempt+1} — click Play for ${dur}s clip`;
-  document.getElementById('hostPill').className = 'pill a';
-  document.getElementById('hostPlayBtn').disabled = false;
-  document.getElementById('hostPlayBtn').textContent = `▶ Play ${dur}s Clip`;
-  document.getElementById('hostLongerBtn').disabled = false;
-  document.getElementById('hostGuessTitle').value = '';
-  document.getElementById('hostGuessArtist').value = '';
-  document.getElementById('hostGuessBtn').disabled = false;
-  hasGuessed = false; // Allow host to guess again in new round
+  document.getElementById('hostLongerBtn').disabled = true;
+  document.getElementById('hostPlayBtn').disabled = true;
+  document.getElementById('hostPill').textContent = 'Requesting longer clip…';
+  // Let server drive the attempt increment — receives play_longer back
+  socket.emit('request_longer');
 }
 
 function hostSubmitGuess() {
@@ -1095,7 +1196,7 @@ function hostDontKnow() {
 
 function hostSkip() { stopClientTimer(); spotifyPause(); socket.emit('skip_song'); }
 function hostEndGame() { stopClientTimer(); spotifyPause(); socket.emit('end_game'); }
-function hostNextSong() { spotifyPause(); currentSongIdx++; socket.emit('next_song'); }
+function hostNextSong() { spotifyPause(); socket.emit('next_song'); }
 function hostPlayAgain() { socket.emit('play_again'); }
 
 function updateHostPlayerStatus(players) {
@@ -1124,7 +1225,7 @@ function initPlayerGameScreen() {
   document.getElementById('playerGuessArtist').value='';
   document.getElementById('playerGuessBtn').disabled=false;
   document.getElementById('playerDontKnowBtn').disabled=false;
-  ['playerTitleList','playerArtistList'].forEach(id => hideAcList(id));
+  hideAcList('playerArtistList');
   document.getElementById('playerWave').classList.add('off');
   document.getElementById('playerPill').textContent='Waiting for host to play…';
   document.getElementById('playerPill').className='pill a';
@@ -1385,10 +1486,49 @@ function setupAutocomplete(inputId, listId, type) {
 }
 
 function initAutocomplete() {
-  setupAutocomplete('hostGuessTitle', 'hostTitleList', 'track');
   setupAutocomplete('hostGuessArtist', 'hostArtistList', 'artist');
-  setupAutocomplete('playerGuessTitle', 'playerTitleList', 'track');
   setupAutocomplete('playerGuessArtist', 'playerArtistList', 'artist');
+}
+
+// ── Theme ──────────────────────────────────────────────────
+function setTheme(name) {
+  // Remove all theme classes
+  document.body.classList.remove('theme-party', 'theme-pro');
+  if (name === 'party') document.body.classList.add('theme-party');
+  if (name === 'pro')   document.body.classList.add('theme-pro');
+
+  // Update button states
+  document.querySelectorAll('.theme-btn').forEach(b => {
+    const isActive = b.id === 'theme' + name.charAt(0).toUpperCase() + name.slice(1);
+    if (name === 'default') {
+      b.id === 'themeDefault' ? activateThemeBtn(b) : deactivateThemeBtn(b);
+    } else {
+      isActive ? activateThemeBtn(b) : deactivateThemeBtn(b);
+    }
+  });
+
+  // Save preference
+  localStorage.setItem('songspy-theme', name);
+}
+
+function activateThemeBtn(btn) {
+  btn.classList.add('active');
+  // Use inline styles since theme vars may not be applied yet
+  const theme = document.body.className.includes('theme-pro')
+    ? { color:'#2563eb', bg:'rgba(37,99,235,.1)', border:'#2563eb' }
+    : document.body.className.includes('theme-party')
+    ? { color:'#ff6b9d', bg:'rgba(255,107,157,.1)', border:'#ff6b9d' }
+    : { color:'#1DB954', bg:'rgba(29,185,84,.1)', border:'#1DB954' };
+  btn.style.color = theme.color;
+  btn.style.background = theme.bg;
+  btn.style.borderColor = theme.border;
+}
+
+function deactivateThemeBtn(btn) {
+  btn.classList.remove('active');
+  btn.style.color = '#888';
+  btn.style.background = 'transparent';
+  btn.style.borderColor = '#444';
 }
 
 function copyCode() {
@@ -1451,6 +1591,9 @@ window._lobbyBuilt = false;
     const el = document.getElementById('spotifyStatus');
     if (el) el.textContent = '✓ Spotify connected';
   }
+  // Restore saved theme
+  const savedTheme = localStorage.getItem('songspy-theme') || 'default';
+  setTheme(savedTheme);
   showScreen('sHome');
 })();
 
