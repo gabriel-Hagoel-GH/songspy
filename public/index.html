@@ -411,8 +411,8 @@ input:focus{border-color:var(--g)}
 
 
     <div class="pos-row">
-      <button id="posStart" class="btn sec pos-btn" onclick="setPos('start')">▶ From start</button>
-      <button id="posMid" class="btn sec pos-btn active" onclick="setPos('middle')">▶ From middle</button>
+      <button id="posStart" class="btn sec pos-btn active" onclick="setPos('start')">▶ From start</button>
+      <button id="posMid" class="btn sec pos-btn" onclick="setPos('middle')">▶ From middle</button>
     </div>
 
     <div style="display:flex;gap:.5rem;width:100%;margin-bottom:.6rem">
@@ -620,7 +620,7 @@ let roundCount = 5;
 let selectedGenres = [];
 let selectedDecades = [];
 let israeliMode = false;
-let playPosition = 'middle';
+let playPosition = 'start';
 let currentAttempt = 0;
 let timerInterval = null;
 let accessToken = '';
@@ -975,8 +975,7 @@ function renderPlayerLobbyList(players) {
 async function hostStartGame() {
   if (!selectedGenres.length && !israeliMode) { showErr('lobbyErr','Select at least one genre'); return; }
   if (!selectedDecades.length) { showErr('lobbyErr','Select at least one decade'); return; }
-  const pCount = parseInt(document.getElementById('playerCount').textContent || '1');
-  if (pCount < 2) { showErr('lobbyErr','Need at least 2 players to start'); return; }
+  // Single player allowed
   document.getElementById('startGameBtn').disabled = true;
   document.getElementById('startGameBtn').textContent = 'Loading songs…';
   const songs = await fetchSongs();
