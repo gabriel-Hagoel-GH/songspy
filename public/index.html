@@ -472,11 +472,33 @@ input:focus{border-color:var(--g)}
 const CLIENT_ID = '343ddfcdf3ef445697e55ff537a2c18a';
 const REDIRECT_URI = window.location.origin + '/';
 const SCOPES = 'user-read-email user-read-private user-modify-playback-state user-read-playback-state';
-const GENRES = ['Pop','Rock','Hip-Hop','R&B','Electronic','Latin','Country','Indie','Jazz','Classical'];
+const GENRES = ['Pop','Rock','Hip-Hop','R&B','Electronic','Latin','Disney','Movie Hits','Viral Hits','One Hit Wonders'];
+// Multiple search queries per genre — more variety, bigger pool
+const GENRE_QUERIES = {
+  'Pop':            ['pop hits','pop music','pop songs','top pop','pop chart'],
+  'Rock':           ['rock hits','rock music','classic rock','rock songs','rock band'],
+  'Hip-Hop':        ['hip hop','rap hits','hip hop music','rap songs','hip hop classic'],
+  'R&B':            ['r&b','soul music','r&b hits','rhythm and blues','r&b songs'],
+  'Electronic':     ['electronic music','dance music','edm hits','dance hits','electronic dance'],
+  'Latin':          ['latin music','latin hits','reggaeton','latin pop','latin songs'],
+  'Disney':         ['disney songs','disney soundtrack','disney music','disney hits','disney princess songs'],
+  'Movie Hits':     ['movie soundtrack','film music','movie songs','cinema hits','best movie songs'],
+  'Viral Hits':     ['viral songs','tiktok hits','trending songs','viral music','internet hits'],
+  'One Hit Wonders':['one hit wonder','one hit wonders','one hit','novelty song','forgotten hits'],
+};
+// Keep simple mapping for backwards compat
 const GENRE_SEARCH = {
   'Pop':'pop','Rock':'rock','Hip-Hop':'hip hop','R&B':'r&b soul',
-  'Electronic':'electronic dance','Latin':'latin','Country':'country',
-  'Indie':'indie alternative','Jazz':'jazz','Classical':'classical'
+  'Electronic':'electronic dance','Latin':'latin',
+  'Disney':'disney','Movie Hits':'movie soundtrack',
+  'Viral Hits':'viral songs tiktok','One Hit Wonders':'one hit wonder'
+};
+// Spotify seed genres for Recommendations API
+// (Disney/Movie/Viral/OneHit don't have seeds — search-only)
+const GENRE_SEEDS = {
+  'Pop':'pop','Rock':'rock','Hip-Hop':'hip-hop','R&B':'r-n-b',
+  'Electronic':'electronic','Latin':'latin',
+  'Disney':null,'Movie Hits':null,'Viral Hits':null,'One Hit Wonders':null
 };
 const ISRAELI_HITS = {
   '1960s':['להיטים ישראליים 1960','שירים ישראליים 1960'],
@@ -858,38 +880,106 @@ async function hostStartGame() {
 
 async function fetchSongs() {
   const allTracks = [];
+
   if (israeliMode) {
+    // Israeli mode: multiple Hebrew search queries per decade
     for (const decade of selectedDecades) {
       const year = parseInt(decade);
-      const queries = ISRAELI_HITS[decade] || [`להיטים ישראליים ${year}`];
-      for (const q of queries) await searchTracks(q, year, allTracks, false);
-      if (allTracks.length < 5) await searchTracks(ISRAELI_HITS[decade]?.[0]||'להיטים ישראליים', year, allTracks, true);
+      const queries = [
+        ...(ISRAELI_HITS[decade] || []),
+        `להיטים ישראליים ${year}`,
+        `מוזיקה ישראלית ${year}`,
+        `שירים עבריים ${year}`,
+        `ישראלי ${decade.replace('s','')}`,
+      ];
+      // Run all queries in parallel (faster)
+      await Promise.all(queries.map(q => searchTracks(q, year, allTracks, false)));
+      // Fallback without decade filter if too few results
+      if (allTracks.length < 8) {
+        await Promise.all(queries.slice(0,2).map(q => searchTracks(q, year, allTracks, true)));
+      }
     }
   } else {
+    // International: use multiple search queries + Recommendations API in parallel
+    const promises = [];
     for (const decade of selectedDecades) {
       const year = parseInt(decade);
       for (const genre of selectedGenres) {
-        const term = GENRE_SEARCH[genre]||genre;
-        await searchTracks(`${term} year:${year}-${year+9}`, year, allTracks, false);
-        await searchTracks(`${term} year:${year}-${year+4}`, year, allTracks, false);
+        const queries = GENRE_QUERIES[genre] || [GENRE_SEARCH[genre] || genre];
+        // Fire all keyword variants with year range
+        queries.forEach(q => {
+          promises.push(searchTracks(`${q} year:${year}-${year+9}`, year, allTracks, false));
+          // Split decade in half for more coverage
+          promises.push(searchTracks(`${q} year:${year}-${year+4}`, year, allTracks, false));
+          promises.push(searchTracks(`${q} year:${year+5}-${year+9}`, year, allTracks, false));
+        });
+        // Also use Recommendations API — different algorithm, different results
+        promises.push(fetchRecommendations(genre, year, allTracks));
       }
     }
+    // Run all in parallel — much faster, much bigger pool
+    await Promise.all(promises);
   }
-  const fresh = allTracks.filter(t=>!playedIds.has(t.id));
-  fresh.sort((a,b)=>b.popularity-a.popularity);
-  return shuffle(fresh.slice(0,40)).slice(0,25);
+
+  const fresh = allTracks.filter(t => !playedIds.has(t.id));
+  fresh.sort((a, b) => b.popularity - a.popularity);
+  // Take top 100 by popularity, then shuffle for variety
+  const top = fresh.slice(0, 100);
+  console.log(`Song pool: ${top.length} tracks`);
+  return shuffle(top);
 }
 
 async function searchTracks(q, year, allTracks, ignoreDecade) {
   try {
-    const r = await spotifyFetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(q)}&type=track&limit=10&market=IL`);
+    const r = await spotifyFetch(
+      `https://api.spotify.com/v1/search?q=${encodeURIComponent(q)}&type=track&limit=10&market=IL`
+    );
     const data = await r.json();
     if (data.error) return;
-    (data.tracks?.items||[]).forEach(t => {
-      const ry = parseInt((t.album?.release_date||'0000').slice(0,4));
-      const ok = ignoreDecade || (ry>=year && ry<=year+9);
-      if (ok && !allTracks.find(x=>x.id===t.id)) {
-        allTracks.push({ title:t.name, artist:t.artists.map(a=>a.name).join(', '), uri:t.uri, id:t.id, popularity:t.popularity||0, albumArt:t.album?.images?.[0]?.url||'', releaseYear:ry });
+    (data.tracks?.items || []).forEach(t => {
+      const ry = parseInt((t.album?.release_date || '0000').slice(0, 4));
+      const ok = ignoreDecade || (ry >= year && ry <= year + 9);
+      if (ok && !allTracks.find(x => x.id === t.id)) {
+        allTracks.push({
+          title: t.name,
+          artist: t.artists.map(a => a.name).join(', '),
+          uri: t.uri, id: t.id,
+          popularity: t.popularity || 0,
+          albumArt: t.album?.images?.[0]?.url || '',
+          releaseYear: ry
+        });
+      }
+    });
+  } catch {}
+}
+
+async function fetchRecommendations(genre, year, allTracks) {
+  // Spotify Recommendations API — skip genres without a seed
+  const seed = GENRE_SEEDS[genre];
+  if (!seed) return; // Disney, Movie, Viral, OneHit use search only
+  try {
+    const params = new URLSearchParams({
+      seed_genres: seed,
+      limit: 10,
+      market: 'IL',
+      target_popularity: 70,
+      min_popularity: 40,
+    });
+    const r = await spotifyFetch(`https://api.spotify.com/v1/recommendations?${params}`);
+    const data = await r.json();
+    if (data.error) return;
+    (data.tracks || []).forEach(t => {
+      const ry = parseInt((t.album?.release_date || '0000').slice(0, 4));
+      const inDecade = ry >= year && ry <= year + 9;
+      if (inDecade && !allTracks.find(x => x.id === t.id)) {
+        allTracks.push({
+          title: t.name,
+          artist: t.artists.map(a => a.name).join(', '),
+          uri: t.uri, id: t.id,
+          popularity: t.popularity || 0,
+          albumArt: t.album?.images?.[0]?.url || '',
+          releaseYear: ry
+        });
       }
     });
   } catch {}
