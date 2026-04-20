@@ -237,10 +237,7 @@ io.on('connection', (socket) => {
   socket.on('songs_ready', ({ songs }) => {
     const room = getRoomOf(socket.id);
     if (!room || room.hostId !== socket.id) return;
-    if (Object.keys(room.players).length < 2) {
-      socket.emit('error', 'Need at least 2 players to start');
-      return;
-    }
+    // Single player allowed
     // Keep full pool — game picks from it as rounds progress
     room.songs = songs; // full shuffled pool from client
     room.currentSongIdx = 0;
