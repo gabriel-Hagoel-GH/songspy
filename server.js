@@ -145,7 +145,7 @@ function fuzzyMatch(guess, actual) {
 }
 
 // ── Timer ─────────────────────────────────────────────────
-const DURS = [10, 20, 30, 40, 50];
+const DURS = [15, 25, 35, 45, 60];
 const POINTS = [10, 8, 6, 4, 2];
 const MAX_ATTEMPTS = 5;
 
@@ -288,8 +288,11 @@ io.on('connection', (socket) => {
     if (room.timerRunning && room.currentAttempt === attempt) return;
     room.currentAttempt = attempt;
     room.timerRunning = false; // reset before startTimer sets it
-    // Reset guesses for every new play
-    Object.values(room.players).forEach(p => { p.guessedCorrectly = false; p.passed = false; });
+    // Only reset guesses at the start of a fresh song (attempt 0)
+    // NOT on every play click — that was causing spurious dot resets
+    if (attempt === 0) {
+      Object.values(room.players).forEach(p => { p.guessedCorrectly = false; p.passed = false; });
+    }
     const duration = DURS[attempt];
     io.to(room.code).emit('song_playing', { attempt, duration });
     startTimer(room, duration);
@@ -478,7 +481,7 @@ setInterval(() => {
 
 // Fallback — serve index.html for any unmatched GET (client-side routing)
 // Must be last so it never intercepts /socket.io or /api routes
-app.get('*path', (req, res) => {
+app.get('*', (req, res) => {
   res.sendFile(INDEX);
 });
 
