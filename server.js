@@ -10,7 +10,7 @@ const io = new Server(httpServer);
 const PORT = process.env.PORT || 8888;
 
 // Serve static files
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(__dirname));
 app.use(require('express').json());
 
 // Spotify recommendations proxy
@@ -61,7 +61,7 @@ app.get('/api/search', async (req, res) => {
   }
 });
 
-app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
 // ── Game State ────────────────────────────────────────────
 const rooms = {}; // roomCode -> room object
@@ -81,12 +81,13 @@ function makeRoom(hostId, hostName) {
     roundCount: 5,
     timerEnd: null,
     timerInterval: null,
+    timerRunning: false,
     selectedGenres: [],
     selectedDecades: [],
     israeliMode: false,
     playPosition: 'middle',
   };
-  rooms[code].players[hostId] = { name: hostName, score: 0, isHost: true, guess: '', artistGuess: '', guessedCorrectly: false };
+  rooms[code].players[hostId] = { name: hostName, score: 0, isHost: true, guess: '', artistGuess: '', guessedCorrectly: false, passed: false };
   return rooms[code];
 }
 
@@ -142,6 +143,7 @@ function startTimer(room, duration) {
   if (room.timerInterval) clearInterval(room.timerInterval);
   const end = Date.now() + duration * 1000;
   room.timerEnd = end;
+  room.timerRunning = true;
 
   io.to(room.code).emit('timer_start', { duration, end });
 
@@ -150,6 +152,7 @@ function startTimer(room, duration) {
     if (remaining <= 0) {
       clearInterval(room.timerInterval);
       room.timerInterval = null;
+      room.timerRunning = false;
       onTimerEnd(room);
     }
   }, 500);
@@ -163,7 +166,8 @@ function onTimerEnd(room) {
   // No one guessed — go to next attempt or reveal
   room.currentAttempt++;
   if (room.currentAttempt >= MAX_ATTEMPTS) {
-    revealSong(room, false);
+    // Short delay so client timer can finish its last tick cleanly
+    setTimeout(() => revealSong(room, false), 800);
   } else {
     // Tell host to play longer clip — host clicks Play to continue
     io.to(room.code).emit('play_longer', {
@@ -176,7 +180,9 @@ function onTimerEnd(room) {
 }
 
 function revealSong(room, won) {
+  if (room.phase === 'revealing' || room.phase === 'gameover') return; // prevent double-reveal
   if (room.timerInterval) { clearInterval(room.timerInterval); room.timerInterval = null; }
+  room.timerRunning = false;
   room.phase = 'revealing';
 
   const song = room.currentSong;
@@ -207,7 +213,7 @@ io.on('connection', (socket) => {
     if (room.phase !== 'lobby') { socket.emit('error', 'Game already started'); return; }
     if (Object.keys(room.players).length >= 10) { socket.emit('error', 'Room is full'); return; }
 
-    room.players[socket.id] = { name, score: 0, isHost: false, guess: '', artistGuess: '', guessedCorrectly: false };
+    room.players[socket.id] = { name, score: 0, isHost: false, guess: '', artistGuess: '', guessedCorrectly: false, passed: false };
     socket.join(code.toUpperCase());
     socket.emit('room_joined', { code: code.toUpperCase(), playerId: socket.id });
     broadcastRoom(room);
@@ -224,6 +230,13 @@ io.on('connection', (socket) => {
     room.israeliMode = israeliMode;
     room.playPosition = playPosition;
     broadcastRoom(room);
+  });
+
+  // Host broadcasts a loading/ready status to players
+  socket.on('set_status', ({ status }) => {
+    const room = getRoomOf(socket.id);
+    if (!room || room.hostId !== socket.id) return;
+    io.to(room.code).emit('host_status', { status });
   });
 
   // Host stores their Spotify token for search proxy
@@ -246,7 +259,7 @@ io.on('connection', (socket) => {
     room.currentSong = room.songs[0];
 
     // Reset all player guesses
-    Object.values(room.players).forEach(p => { p.guess = ''; p.artistGuess = ''; p.guessedCorrectly = false; });
+    Object.values(room.players).forEach(p => { p.guess = ''; p.artistGuess = ''; p.guessedCorrectly = false; p.passed = false; });
 
     io.to(room.code).emit('game_start', {
       song: null,
@@ -261,11 +274,12 @@ io.on('connection', (socket) => {
   socket.on('song_playing', ({ attempt }) => {
     const room = getRoomOf(socket.id);
     if (!room || room.hostId !== socket.id) return;
-    // Prevent double timer: ignore if same attempt already running
-    if (room.timerInterval && room.currentAttempt === attempt) return;
+    // Prevent double timer using timerRunning flag
+    if (room.timerRunning && room.currentAttempt === attempt) return;
     room.currentAttempt = attempt;
+    room.timerRunning = false; // reset before startTimer sets it
     // Reset guesses for every new play
-    Object.values(room.players).forEach(p => { p.guessedCorrectly = false; });
+    Object.values(room.players).forEach(p => { p.guessedCorrectly = false; p.passed = false; });
     const duration = DURS[attempt];
     io.to(room.code).emit('song_playing', { attempt, duration });
     startTimer(room, duration);
@@ -300,11 +314,11 @@ io.on('connection', (socket) => {
     io.to(room.code).emit('player_guessed', { name: player.name, pts });
     broadcastRoom(room);
 
-    // Check if ALL players guessed correctly
-    const allGuessed = Object.values(room.players).every(p => p.guessedCorrectly);
+    // Check if ALL players guessed correctly or passed
+    const allGuessed = Object.values(room.players).every(p => p.guessedCorrectly || p.passed);
     if (allGuessed) {
-      // Short delay so everyone sees the last guess notification
-      setTimeout(() => revealSong(room, true), 1500);
+      const won = Object.values(room.players).some(p => p.guessedCorrectly);
+      setTimeout(() => revealSong(room, won), 1500);
     }
   });
 
@@ -324,7 +338,7 @@ io.on('connection', (socket) => {
     room.currentSong = room.songs[room.currentSongIdx];
     room.currentAttempt = 0;
     room.phase = 'playing';
-    Object.values(room.players).forEach(p => { p.guess = ''; p.artistGuess = ''; p.guessedCorrectly = false; });
+    Object.values(room.players).forEach(p => { p.guess = ''; p.artistGuess = ''; p.guessedCorrectly = false; p.passed = false; });
 
     io.to(room.code).emit('next_song', {
       songIdx: room.currentSongIdx,
@@ -347,7 +361,7 @@ io.on('connection', (socket) => {
     room.selectedGenres = [];
     room.selectedDecades = [];
     room.israeliMode = false;
-    Object.values(room.players).forEach(p => { p.score = 0; p.guess = ''; p.artistGuess = ''; p.guessedCorrectly = false; });
+    Object.values(room.players).forEach(p => { p.score = 0; p.guess = ''; p.artistGuess = ''; p.guessedCorrectly = false; p.passed = false; });
     io.to(room.code).emit('back_to_lobby');
     broadcastRoom(room);
   });
@@ -357,11 +371,14 @@ io.on('connection', (socket) => {
     const room = getRoomOf(socket.id);
     if (!room || room.phase !== 'playing') return;
     const player = room.players[socket.id];
-    if (!player || player.guessedCorrectly) return;
-    player.guessedCorrectly = true;
+    if (!player || player.guessedCorrectly || player.passed) return;
+    player.passed = true;
     broadcastRoom(room);
-    const allDone = Object.values(room.players).every(p => p.guessedCorrectly);
-    if (allDone) setTimeout(() => revealSong(room, true), 1500);
+    const allDone = Object.values(room.players).every(p => p.guessedCorrectly || p.passed);
+    if (allDone) {
+      const won = Object.values(room.players).some(p => p.guessedCorrectly);
+      setTimeout(() => revealSong(room, won), 1500);
+    }
   });
 
   // Host passes — marks themselves as done without scoring
@@ -369,12 +386,14 @@ io.on('connection', (socket) => {
     const room = getRoomOf(socket.id);
     if (!room || room.hostId !== socket.id) return;
     const host = room.players[socket.id];
-    if (!host || host.guessedCorrectly) return;
-    host.guessedCorrectly = true; // mark as done (no points)
+    if (!host || host.guessedCorrectly || host.passed) return;
+    host.passed = true;
     broadcastRoom(room);
-    // Check if all players are done
-    const allDone = Object.values(room.players).every(p => p.guessedCorrectly);
-    if (allDone) setTimeout(() => revealSong(room, true), 1500);
+    const allDone = Object.values(room.players).every(p => p.guessedCorrectly || p.passed);
+    if (allDone) {
+      const won = Object.values(room.players).some(p => p.guessedCorrectly);
+      setTimeout(() => revealSong(room, won), 1500);
+    }
   });
 
   // Host requests longer clip — server drives attempt increment
@@ -382,6 +401,7 @@ io.on('connection', (socket) => {
     const room = getRoomOf(socket.id);
     if (!room || room.hostId !== socket.id) return;
     if (room.timerInterval) { clearInterval(room.timerInterval); room.timerInterval = null; }
+    room.timerRunning = false; // ensure flag is clear after manual cancel
     room.currentAttempt++;
     if (room.currentAttempt >= MAX_ATTEMPTS) {
       revealSong(room, false);
@@ -389,7 +409,7 @@ io.on('connection', (socket) => {
     }
     const duration = DURS[room.currentAttempt];
     // Reset guesses so everyone can guess again
-    Object.values(room.players).forEach(p => { p.guessedCorrectly = false; });
+    Object.values(room.players).forEach(p => { p.guessedCorrectly = false; p.passed = false; });
     io.to(room.code).emit('play_longer', {
       attempt: room.currentAttempt,
       duration
