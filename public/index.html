@@ -38,13 +38,13 @@ body.theme-party .rbox{background:linear-gradient(135deg,rgba(255,107,157,.15),r
 body.theme-party .rtitle{color:#ff6b9d}
 body.theme-party .winner-name{color:#ff6b9d}
 body.theme-party .pts-flash{color:#ff6b9d}
-body.theme-party .round-btn.active,.body.theme-party .pos-btn.active{background:linear-gradient(135deg,#ff6b9d,#c44dff);color:#fff;border-color:#ff6b9d}
+body.theme-party .round-btn.active,body.theme-party .pos-btn.active{background:linear-gradient(135deg,#ff6b9d,#c44dff);color:#fff;border-color:#ff6b9d}
 body.theme-party .autocomplete-list{background:#2d0a4e;border-color:rgba(255,107,157,.3)}
-body.theme-party .autocomplete-item:hover,.body.theme-party .autocomplete-item.active{background:rgba(255,107,157,.1)}
+body.theme-party .autocomplete-item:hover,body.theme-party .autocomplete-item.active{background:rgba(255,107,157,.1)}
 body.theme-party #toast{background:#2d0a4e;border-color:rgba(255,107,157,.3)}
 body.theme-party .pill.g{background:rgba(255,107,157,.15);color:#ff6b9d;border-color:rgba(255,107,157,.3)}
 body.theme-party .pill.a{background:rgba(255,149,0,.15);color:#ff9500;border-color:rgba(255,149,0,.3)}
-body.theme-party .host-badge,.body.theme-party .guessed-badge{background:rgba(255,107,157,.2);color:#ff6b9d}
+body.theme-party .host-badge,body.theme-party .guessed-badge{background:rgba(255,107,157,.2);color:#ff6b9d}
 body.theme-party .divider{background:rgba(255,255,255,.08)}
 body.theme-party .spinner{border-color:rgba(255,107,157,.3);border-top-color:#ff6b9d}
 body.theme-party .pos-btn.active{background:linear-gradient(135deg,#ff6b9d,#c44dff);color:#fff;border-color:#ff6b9d}
@@ -683,6 +683,10 @@ async function refreshAccessToken() {
       sessionStorage.setItem('at', accessToken);
       if (data.refresh_token) sessionStorage.setItem('rt', data.refresh_token);
       setTimeout(refreshAccessToken, (data.expires_in - 60) * 1000);
+      // Re-sync fresh token with server so search proxy stays valid
+      if (socket && socket.connected && roomCode) {
+        socket.emit('host_token', { token: accessToken });
+      }
     }
   } catch {}
 }
@@ -819,7 +823,7 @@ function connectSocket() {
       document.getElementById('playerPill').textContent = `Round ${attempt+1} of 5 — listen again, then guess!`;
       document.getElementById('playerPill').className = 'pill a';
       document.getElementById('playerWave').classList.add('off');
-      // Reset guess area so player can guess again
+      // Reset guess area so ALL players can guess again (including those who passed)
       document.getElementById('playerGuessArea').style.display = 'block';
       document.getElementById('playerGuessedMsg').style.display = 'none';
       document.getElementById('playerGuessTitle').value = '';
@@ -843,7 +847,7 @@ function connectSocket() {
       } else {
         showToast(`You got it! +${pts} pts`);
       }
-      if (pts >= 8) launchConfetti();
+      launchConfetti();
     } else {
       if (!isHost) {
         document.getElementById('playerGuessTitle').value = '';
@@ -864,6 +868,7 @@ function connectSocket() {
   socket.on('reveal', ({ won, song, players, attempt, isLast }) => {
     stopClientTimer();
     spotifyPause();
+    if (song?.id) playedIds.add(song.id);
     showReveal(won, song, players, attempt, isLast);
   });
 
@@ -881,6 +886,18 @@ function connectSocket() {
     showScreen(isHost ? 'sLobby' : 'sPlayerLobby');
   });
   socket.on('host_left', () => { showToast('Host left the game'); leaveRoom(); });
+
+  socket.on('host_status', ({ status }) => {
+    if (!isHost) {
+      const el = document.querySelector('#sPlayerLobby .waiting-dots');
+      if (status === 'loading') {
+        if (el) el.textContent = 'Host is loading songs';
+        showToast('Host is loading songs…');
+      } else {
+        if (el) el.textContent = 'Waiting';
+      }
+    }
+  });
 }
 
 // ── Navigation ────────────────────────────────────────────
@@ -919,6 +936,10 @@ function leaveRoom() {
 
 // ── Lobby ─────────────────────────────────────────────────
 function buildLobby() {
+  // Clear any lingering visual state from previous game
+  document.querySelectorAll('.pick.on').forEach(b => b.classList.remove('on'));
+  document.querySelectorAll('.round-btn.active').forEach(b => b.classList.remove('active'));
+
   const gg = document.getElementById('genreGrid'); gg.innerHTML = '';
   GENRES.forEach(g => {
     const b = document.createElement('button'); b.className='pick'; b.textContent=g;
@@ -957,7 +978,7 @@ function renderLobbyPlayers(players) {
   const c = document.getElementById('lobbyPlayers'); c.innerHTML='';
   players.forEach(p => {
     const d=document.createElement('div'); d.className='player-row';
-    d.innerHTML=`<span class="name">${p.name}${p.isHost?'<span class="host-badge">host</span>':''}</span>`;
+    d.innerHTML=`<span class="name"><span'<span class="host-badge">host</span>':''}</span>`;
     c.appendChild(d);
   });
 }
@@ -966,7 +987,7 @@ function renderPlayerLobbyList(players) {
   const c = document.getElementById('playerLobbyList'); if(!c)return; c.innerHTML='';
   players.forEach(p => {
     const d=document.createElement('div'); d.className='player-row';
-    d.innerHTML=`<span class="name">${p.name}${p.isHost?'<span class="host-badge">host</span>':''}</span>`;
+    d.innerHTML=`<span class="name"><span'<span class="host-badge">host</span>':''}</span>`;
     c.appendChild(d);
   });
 }
@@ -975,10 +996,11 @@ function renderPlayerLobbyList(players) {
 async function hostStartGame() {
   if (!selectedGenres.length && !israeliMode) { showErr('lobbyErr','Select at least one genre'); return; }
   if (!selectedDecades.length) { showErr('lobbyErr','Select at least one decade'); return; }
-  // Single player allowed
   document.getElementById('startGameBtn').disabled = true;
   document.getElementById('startGameBtn').textContent = 'Loading songs…';
+  socket.emit('set_status', { status: 'loading' }); // tell players we're fetching
   const songs = await fetchSongs();
+  socket.emit('set_status', { status: 'ready' });
   document.getElementById('startGameBtn').disabled = false;
   document.getElementById('startGameBtn').textContent = 'Start Game ▶';
   if (!songs.length) { showErr('lobbyErr','No songs found. Try different settings.'); return; }
@@ -1054,7 +1076,8 @@ async function searchTracks(q, year, allTracks, ignoreDecade) {
           uri: t.uri, id: t.id,
           popularity: t.popularity || 0,
           albumArt: t.album?.images?.[0]?.url || '',
-          releaseYear: ry
+          releaseYear: ry,
+          durationMs: t.duration_ms || 180000
         });
       }
     });
@@ -1086,7 +1109,8 @@ async function fetchRecommendations(genre, year, allTracks) {
           uri: t.uri, id: t.id,
           popularity: t.popularity || 0,
           albumArt: t.album?.images?.[0]?.url || '',
-          releaseYear: ry
+          releaseYear: ry,
+          durationMs: t.duration_ms || 180000
         });
       }
     });
@@ -1100,7 +1124,7 @@ function initHostGameScreen() {
   document.getElementById('hostRoundInfo').textContent = (israeliMode?'🇮🇱 ':'')+selectedGenres.join(', ')+(selectedDecades.length?' · '+selectedDecades.join(', '):'');
   document.getElementById('hostPlayBtn').disabled = false;
   document.getElementById('hostPlayBtn').textContent = '▶ Play Clip';
-  document.getElementById('hostLongerBtn').disabled = false;
+  document.getElementById('hostLongerBtn').disabled = true; // enabled after first successful play
   document.getElementById('hostGuessTitle').value = '';
   document.getElementById('hostGuessArtist').value = '';
   document.getElementById('hostGuessBtn').disabled = false;
@@ -1134,7 +1158,7 @@ async function hostPlayClip() {
   document.getElementById('hostPill').className = 'pill g';
   document.getElementById('hostPill').textContent = `Round ${currentAttempt+1} — ${dur} seconds`;
 
-  const posMs = playPosition === 'start' ? 0 : 30000;
+  const posMs = playPosition === 'start' ? 0 : Math.floor((song.durationMs || 180000) / 2);
   const res = await spotifyPlay(song.uri, posMs);
 
   if (res && res.status === 404) {
@@ -1160,6 +1184,7 @@ async function hostPlayClip() {
   document.getElementById('hostOpenSpotify').style.display = 'none';
   document.getElementById('hostPill').textContent = `▶ Playing — Round ${currentAttempt+1}`;
   document.getElementById('hostPill').className = 'pill g';
+  document.getElementById('hostLongerBtn').disabled = false; // now safe to offer longer
   socket.emit('song_playing', { attempt: currentAttempt });
 }
 
@@ -1278,7 +1303,7 @@ function startClientTimer(duration, endTime) {
         spotifyPause();
         document.getElementById('hostWave').classList.add('off');
         document.getElementById('hostPlayBtn').disabled = false;
-        document.getElementById('hostPlayBtn').textContent = '▶ Play Again';
+        document.getElementById('hostPlayBtn').textContent = '▶ Replay Clip';
         document.getElementById('hostLongerBtn').disabled = false;
         document.getElementById('hostPill').className = 'pill a';
         document.getElementById('hostPill').textContent = "Time\'s up — guess or play longer";
@@ -1544,7 +1569,16 @@ function showScreen(id) {
 function showErr(id,msg) { const e=document.getElementById(id); if(!e)return; e.textContent=msg; setTimeout(()=>e.textContent='',3000); }
 function showLoading(msg) { document.getElementById('loadingMsg').textContent=msg; document.getElementById('loadingOverlay').classList.add('show'); }
 function hideLoading() { document.getElementById('loadingOverlay').classList.remove('show'); }
-function shuffle(arr) { return arr.sort(()=>Math.random()-.5); }
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
 let toastTimer=null;
 function showToast(msg) {
   const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show');
@@ -1607,7 +1641,6 @@ window.addEventListener('popstate', () => {
 });
 
 // ── Input enter keys ──────────────────────────────────────
-document.getElementById('nameInput').addEventListener('keydown',e=>{if(e.key==='Enter')goCreate();});
 document.getElementById('codeInput').addEventListener('keydown',e=>{if(e.key==='Enter')joinRoom();});
 document.getElementById('hostGuessTitle').addEventListener('keydown',e=>{if(e.key==='Enter')hostSubmitGuess();});
 document.getElementById('hostGuessArtist').addEventListener('keydown',e=>{if(e.key==='Enter')hostSubmitGuess();});
