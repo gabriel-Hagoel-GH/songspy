@@ -2,6 +2,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -9,9 +10,20 @@ const io = new Server(httpServer);
 
 const PORT = process.env.PORT || 8888;
 
+// Resolve the directory where server.js lives
+const ROOT = path.join(__dirname, 'public');
+const INDEX = path.join(ROOT, 'index.html');
+
+// Verify index.html exists at startup
+if (!fs.existsSync(INDEX)) {
+  console.error(`\n❌ index.html not found at: ${INDEX}`);
+  console.error(`   Make sure server.js and index.html are in the same folder.\n`);
+  process.exit(1);
+}
+
 // Serve static files
-app.use(express.static(__dirname));
-app.use(require('express').json());
+app.use(express.static(ROOT));
+app.use(express.json());
 
 // Spotify recommendations proxy
 app.get('/api/recommendations', async (req, res) => {
@@ -60,8 +72,6 @@ app.get('/api/search', async (req, res) => {
     res.json({ items: [] });
   }
 });
-
-app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
 // ── Game State ────────────────────────────────────────────
 const rooms = {}; // roomCode -> room object
@@ -466,6 +476,13 @@ setInterval(() => {
   });
 }, 30 * 60 * 1000);
 
+// Fallback — serve index.html for any unmatched GET (client-side routing)
+// Must be last so it never intercepts /socket.io or /api routes
+app.get('*path', (req, res) => {
+  res.sendFile(INDEX);
+});
+
 httpServer.listen(PORT, () => {
-  console.log(`\n🎵 SongSpy Multiplayer running on port ${PORT}\n`);
+  console.log(`\n🎵 SongSpy running on http://localhost:${PORT}`);
+  console.log(`   Serving files from: ${ROOT}\n`);
 });
