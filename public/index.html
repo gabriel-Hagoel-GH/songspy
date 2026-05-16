@@ -185,6 +185,7 @@ input:focus{border-color:var(--g)}
 .dots{display:flex;gap:.4rem;justify-content:center;margin-bottom:.5rem}
 .dot{width:10px;height:10px;border-radius:50%;background:#252525;border:1.5px solid #3a3a3a}
 .dot.fail{background:#e22134;border-color:#e22134}
+.dot.active{background:var(--g);border-color:var(--g);box-shadow:0 0 6px var(--g)}
 
 /* Wave */
 .wave{display:flex;align-items:center;gap:3px;height:30px;margin:.3rem auto;justify-content:center}
@@ -802,7 +803,11 @@ function connectSocket() {
     updateDots(attempt, isHost ? 'host' : 'player');
   });
 
-  socket.on('timer_start', ({ duration, end }) => startClientTimer(duration, end));
+  socket.on('timer_start', ({ duration, end }) => {
+    // Use local clock to avoid server/client time skew causing timer to start behind
+    const localEnd = Date.now() + duration * 1000;
+    startClientTimer(duration, localEnd);
+  });
 
   socket.on('play_longer', ({ attempt, duration }) => {
     currentAttempt = attempt;
@@ -811,7 +816,7 @@ function connectSocket() {
       document.getElementById('hostWave').classList.add('off');
       document.getElementById('hostPlayBtn').disabled = false;
       document.getElementById('hostPlayBtn').textContent = `▶ Play ${duration}s Clip`;
-      document.getElementById('hostLongerBtn').disabled = false;
+      document.getElementById('hostLongerBtn').disabled = attempt >= 4;
       document.getElementById('hostPill').textContent = `Nobody guessed — play ${duration}s clip`;
       document.getElementById('hostPill').className = 'pill a';
       document.getElementById('hostGuessTitle').value = '';
@@ -857,7 +862,7 @@ function connectSocket() {
         showErr('playerGuessErr', 'Not quite! Try again.');
       } else {
         document.getElementById('hostGuessBtn').disabled = false;
-  document.getElementById('hostDontKnowBtn').disabled = false;
+        document.getElementById('hostDontKnowBtn').disabled = false;
         document.getElementById('hostGuessTitle').value = '';
         document.getElementById('hostGuessArtist').value = '';
         showErr('hostGuessErr', 'Not quite! Try again.');
@@ -978,7 +983,7 @@ function renderLobbyPlayers(players) {
   const c = document.getElementById('lobbyPlayers'); c.innerHTML='';
   players.forEach(p => {
     const d=document.createElement('div'); d.className='player-row';
-    d.innerHTML=`<span class="name"><span'<span class="host-badge">host</span>':''}</span>`;
+    d.innerHTML=`<span class="name">${esc(p.name)}${p.isHost?'<span class="host-badge">host</span>':''}</span>`;
     c.appendChild(d);
   });
 }
@@ -987,7 +992,7 @@ function renderPlayerLobbyList(players) {
   const c = document.getElementById('playerLobbyList'); if(!c)return; c.innerHTML='';
   players.forEach(p => {
     const d=document.createElement('div'); d.className='player-row';
-    d.innerHTML=`<span class="name"><span'<span class="host-badge">host</span>':''}</span>`;
+    d.innerHTML=`<span class="name">${esc(p.name)}${p.isHost?'<span class="host-badge">host</span>':''}</span>`;
     c.appendChild(d);
   });
 }
@@ -996,14 +1001,24 @@ function renderPlayerLobbyList(players) {
 async function hostStartGame() {
   if (!selectedGenres.length && !israeliMode) { showErr('lobbyErr','Select at least one genre'); return; }
   if (!selectedDecades.length) { showErr('lobbyErr','Select at least one decade'); return; }
+  // Check Spotify token before even trying
+  const tok = sessionStorage.getItem('at');
+  if (!tok) {
+    showErr('lobbyErr','Not connected to Spotify — go back and log in first.');
+    return;
+  }
+  accessToken = tok;
   document.getElementById('startGameBtn').disabled = true;
   document.getElementById('startGameBtn').textContent = 'Loading songs…';
-  socket.emit('set_status', { status: 'loading' }); // tell players we're fetching
+  socket.emit('set_status', { status: 'loading' });
   const songs = await fetchSongs();
   socket.emit('set_status', { status: 'ready' });
   document.getElementById('startGameBtn').disabled = false;
   document.getElementById('startGameBtn').textContent = 'Start Game ▶';
-  if (!songs.length) { showErr('lobbyErr','No songs found. Try different settings.'); return; }
+  if (!songs.length) {
+    showErr('lobbyErr','No songs found — Spotify may have rejected the request. Check you have Premium and try fewer filters.');
+    return;
+  }
   currentSongs = songs;
   socket.emit('songs_ready', { songs });
 }
@@ -1119,6 +1134,7 @@ async function fetchRecommendations(genre, year, allTracks) {
 
 // ── Host Game ─────────────────────────────────────────────
 function initHostGameScreen() {
+  stopClientTimer();
   showScreen('sHostGame');
   document.getElementById('hostSongCounter').textContent = `Song ${currentSongIdx+1} of ${roundCount}`;
   document.getElementById('hostRoundInfo').textContent = (israeliMode?'🇮🇱 ':'')+selectedGenres.join(', ')+(selectedDecades.length?' · '+selectedDecades.join(', '):'');
@@ -1218,8 +1234,15 @@ function hostDontKnow() {
   socket.emit('host_pass'); // tell server host is passing
 }
 
-function hostSkip() { stopClientTimer(); spotifyPause(); socket.emit('skip_song'); }
-function hostEndGame() { stopClientTimer(); spotifyPause(); socket.emit('end_game'); }
+function hostSkip() {
+  const btn = document.querySelector('[onclick="hostSkip()"]');
+  if (btn) btn.disabled = true;
+  stopClientTimer(); spotifyPause(); socket.emit('skip_song');
+}
+function hostEndGame() {
+  if (!confirm('End the game for everyone?')) return;
+  stopClientTimer(); spotifyPause(); socket.emit('end_game');
+}
 function hostNextSong() { spotifyPause(); socket.emit('next_song'); }
 function hostPlayAgain() { socket.emit('play_again'); }
 
@@ -1240,6 +1263,7 @@ function updateHostPlayerStatus(players) {
 
 // ── Player Game ───────────────────────────────────────────
 function initPlayerGameScreen() {
+  stopClientTimer();
   showScreen('sPlayerGame');
   hasGuessed = false;
   document.getElementById('playerSongCounter').textContent = `Song ${currentSongIdx+1} of ${roundCount}`;
@@ -1258,6 +1282,8 @@ function initPlayerGameScreen() {
 }
 
 function playerDontKnow() {
+  document.getElementById('playerGuessBtn').disabled = true;
+  document.getElementById('playerDontKnowBtn').disabled = true;
   hasGuessed = true;
   document.getElementById('playerGuessArea').style.display = 'none';
   document.getElementById('playerGuessedMsg').style.display = 'block';
@@ -1321,20 +1347,24 @@ function stopClientTimer() { if(timerInterval){clearInterval(timerInterval);time
 
 function updateHostTimer(val, max) {
   const el = document.getElementById('hostTimerRing'); if(!el)return;
-  el.style.strokeDashoffset = 272 - ((val/max)*272);
+  el.style.strokeDashoffset = (val/max) * 272;
   el.style.stroke = val<=5?'#e22134':val<=10?'#f59e0b':'var(--g)';
   document.getElementById('hostTimerNum').textContent = val;
 }
 function updatePlayerTimer(val, max) {
   const el = document.getElementById('playerTimerRing'); if(!el)return;
-  el.style.strokeDashoffset = 272 - ((val/max)*272);
+  el.style.strokeDashoffset = (val/max) * 272;
   el.style.stroke = val<=5?'#e22134':val<=10?'#f59e0b':'var(--g)';
   document.getElementById('playerTimerNum').textContent = val;
 }
 function updateDots(attempt, who) {
   const id = who==='host'?'hostDots':'playerDots';
   const c = document.getElementById(id); if(!c)return; c.innerHTML='';
-  for(let i=0;i<5;i++){const d=document.createElement('div');d.className='dot'+(i<attempt?' fail':'');c.appendChild(d);}
+  for(let i=0;i<5;i++){
+    const d=document.createElement('div');
+    d.className='dot'+(i<attempt?' fail':(i===attempt?' active':''));
+    c.appendChild(d);
+  }
 }
 
 // ── Reveal ────────────────────────────────────────────────
@@ -1413,6 +1443,7 @@ async function searchSuggestions(query, type) {
   if (!query || query.length < 2) return [];
   const cacheKey = type + ':' + query.toLowerCase();
   if (acCache[cacheKey]) return acCache[cacheKey];
+  if (Object.keys(acCache).length > 100) acCache = {};
   try {
     let results = [];
     if (isHost && accessToken) {
